@@ -1,0 +1,48 @@
+Changelog
+ZGloom-Vita Vita2D
+Based on SDL Version 3.0
+
+2.2
+Performance Boost - Frames now are around 45-60 FPS instead the previous 15-20 FPS.
+Fixed some bugs and made the gameplay a bit smoother.
+More fixes to come!
+
+2.3
+Toolchain-optimization when compiling
+SDL_mixer set to 44.1 kHz (before 22.05 kHz)
+libxmp-Player set to 44.1 kHz
+
+2.4
+All compilation warnings eliminated
+Sound Init/Quit fix soundhandler.cpp
+Added filter atmospheric vignette overlay (options)
+Added filter scanlines (options)
+Added filter filmgrain (options)
+All options are saved now
+
+2.5
+Fixed a bug where, when moving sideways, the muzzle flash didn't come from the weapon but from the side.
+
+2.6
+Render Optimizing
+Optimized Firerate
+New FPS 50 / 30 Option (both at stable framerate)
+Cheat mode "Photon weapon at start" now more robust
+Present path centralized via RendererHooks::beginFrame() / endFramePresent() (no duplicate present elements outside the hooks)
+Streaming texture bridge (Stub) prepared (renderer_sdlbridge.*)
+Menunavigation now loops with DPAD, also added Circle=go back, Square=Value lower, Cross=Value up
+Menu items and description optimized
+
+3.0
+Optimized and fixed renderer
+FPS 50 / 30 Option (both at stable framerates)
+Blood is now covered by walls if the enemy is beside or behind a wall
+Fixed a bug where, when moving sideways, the muzzle flash didn't come from the weapon but from the side.
+Menunavigation now loops with DPAD, also added Circle=go back, Square=Value lower, Cross=Value up
+Toolchain-finetuning for up to 4% smaller .VPK and slightly better performance
+Atmospheric Vignette/ Film-grain/ Scanlines overlay (new options)
+Unified config.txt with new default-values for all settings
+SDL_mixer and libxmp-Player set to 44kHz (before 22kHz)
+Menu items and description optimized
+All compilation warnings eliminated
+Cleaned up non-used dependencies
