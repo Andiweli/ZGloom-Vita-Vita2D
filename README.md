@@ -1,15 +1,29 @@
 # ZGloom-Vita
 
-A port of [ZGloom](https://github.com/Swizpig/ZGloom) for the PlayStation Vita.<br>
-A fork of [ZGloom-vita](https://github.com/JetStreamSham/ZGloom-vita) from [JetStreamSham](https://github.com/JetStreamSham)
+A SDL port of [ZGloom](https://github.com/Swizpig/ZGloom) for the PlayStation Vita.  
+A fork of [ZGloom-Vita](https://github.com/JetStreamSham/ZGloom-vita) from [JetStreamSham](https://github.com/JetStreamSham).  
+Now with integrated launcher for all Gloom-Engine games available and integrated cheat-menu!
 
 ## What's new?
-1. added a launcher to the game to have all Gloom-Engine games available
-2. added a cheat menu into the game menu to set invinite health photon weapon at start
+ZGloom-Vita now has:
+- Optimized and fixed renderer
+- FPS 50 / 30 Option (both at stable framerates)
+- Blood is now covered by walls if the enemy is beside or behind a wall
+- Fixed a bug where, when moving sideways, the muzzle flash didn't come from the weapon but from the side.
+- Menunavigation now loops with DPAD, also added Circle=go back, Square=Value lower, Cross=Value up
+- Toolchain-finetuning for up to 4% smaller .VPK and slightly better performance 
+- Atmospheric Vignette/ Film-grain/ Scanlines overlay (new options)
+- Unified config.txt with new default-values for all settings
+- SDL_mixer and libxmp-Player set to 44kHz (before 22kHz)
+- Menu items and description optimized
+- All compilation warnings eliminated
+- Cleaned up non-used dependencies
 
 ## What is Gloom?
 
 [Gloom](https://en.wikipedia.org/wiki/Gloom_(video_game)) was a 1995 Doom-clone from Black Magic Software for Commodore Amiga. It had [very messy and meaty graphics](https://www.lemonamiga.com/games/details.php?id=1781) and needed a very powerful Amiga computer back then (A1200 @ 030 was far too low). It had several official successors like Gloom Deluxe/Ultimate Gloom (a graphical enhanced Gloom), Gloom 3, Zombie Massacre and even some full-game conversion of 90's Amiga games.
+
+<img width="2040" height="1805" alt="gloom-mockup" src="https://github.com/user-attachments/assets/98efe43e-9a7a-4fc7-87bf-7463df071cb5" />
 
 # Instructions
 
@@ -25,24 +39,32 @@ To play on PS VITA install the .vpk, download the .zip of the game(s) you want t
 > ux0:/data/zgloom/gloom3 <br>
 > ux0:/data/zgloom/massacre
 
-![Preview of Livearea](https://github.com/andiweli/ZGloom-vita/blob/master/images/gloom-livearea.png)
-
-### Some screenshots from the game Gloom Deluxe itself
-![Preview of the game](https://github.com/andiweli/ZGloom-vita/blob/master/images/gloom-mockup.png)
-
 ## In-game music
 
 ZGloom can now add in-game music using any module that XMP can play. Put the mods in the sfxs folder and add "song_blitz.mod" or whatever the module name is to the script. Multiple song_ commands are allowed, allowing per-level music.
 
-## Building on Linux
+## Building on Linux (or [WSL](https://learn.microsoft.com/de-de/windows/wsl/install) on Windows)
 
-1. Install the [VitaSDK](https://vitasdk.org/).
-2. Install the LibXMP vita library [port](https://github.com/JetStreamSham/libxmp). See the [porting libraries](https://vitasdk.org/) section for installtion instructions.
-3. Generate makefile with `cmake CMakeLists.txt`.
-4. Compile with `make`.
+I am using Ubuntu on Windows with VitaSDK.
 
-# TODO
-Change renderer
+1. Install packages
+    ```
+    apt-get install make git-core cmake python
+    ``` 
+3. Install the [VitaSDK](https://vitasdk.org/) (see more @ [VitaSDK Installation](https://vitasdk.org/))
+    ```
+    export VITASDK=/usr/local/vitasdk
+    export PATH=$VITASDK/bin:$PATH # add vitasdk tool to $PATH
+    git clone https://github.com/vitasdk/vdpm
+    cd vdpm
+    ./bootstrap-vitasdk.sh
+    ./install-all.sh
+    ```
+4. Install the LibXMP vita library [port](https://github.com/JetStreamSham/libxmp) (see more @ [porting libraries section](https://vitasdk.org/) for installtion instructions)
+6. Generate makefile and build .VPK with
+    ```
+    ./build.sh
+    ```
 
 # License
 
