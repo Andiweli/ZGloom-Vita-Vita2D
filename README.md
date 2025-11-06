@@ -1,11 +1,9 @@
-# ZGloom-Vita
+# ZGloom-Vita-Vita2D
 
-A SDL port of [ZGloom](https://github.com/Swizpig/ZGloom) for the PlayStation Vita.  
-A fork of [ZGloom-Vita](https://github.com/JetStreamSham/ZGloom-vita) from [JetStreamSham](https://github.com/JetStreamSham).  
-Now with integrated launcher for all Gloom-Engine games available and integrated cheat-menu!
+A Vita2D version of [ZGloom-Vita-SDL](https://github.com/andiweli/ZGloom-Vita-SDL) for the PlayStation Vita.  
+Based on version 3.0.
 
-## What's new?
-ZGloom-Vita now has:
+## Improvements on version 3.0
 - Optimized and fixed renderer
 - FPS 50 / 30 Option (both at stable framerates)
 - Blood is now covered by walls if the enemy is beside or behind a wall
