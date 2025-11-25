@@ -70,7 +70,7 @@ ZGloom is a modern reimplementation of this engine, and this project is the **PS
 
 ---
 
-## 🖼 Screenshot
+## 🖼 Screenshots
 
 Some screenshots of ZGloom-Vita-Vita2D running on PS Vita:
 
@@ -122,19 +122,6 @@ After extracting the game data on your PC, copy the *folders* (depending on whic
 > ux0:/data/zgloom/massacre  
 
 Once the files are in place, launch **ZGloom-Vita-Vita2D** from the LiveArea and select the game you want to play.
-
----
-
-## 🔊 In-Game Music (Module Support via XMP)
-
-ZGloom can play in-game music using any module format supported by **XMP** (e.g. `.mod`, `.xm` etc.).
-
-1. Put your module files into the **`sfxs`** folder of the game data.  
-2. Add a line like the following to the game script:
-
-    song_blitz.mod
-
-You can use multiple `song_` commands in the script, which enables **per-level music**, each level using its own track.
 
 ---
 
