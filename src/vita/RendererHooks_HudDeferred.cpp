@@ -38,6 +38,9 @@ static const float kHudNarrowX = 0.85f;
 // HUD global scale factor (applied on top of Present's integer scale)
 static const float kHudScale   = 1.50f;
 
+// neu: zusätzlicher vertikaler Skalierungsfaktor (HUD 25% niedriger)
+static const float kHudScaleY  = 0.75f;
+
 // Call from game loop instead of direct hud.Render(...)
 void DeferHudRender(::Hud* hud, ::MapObject& pobj, ::Font* font, int renderW, int renderH) {
     // Take a snapshot of the player object so we don't reference a stack object later.
@@ -110,7 +113,7 @@ void EffectsDrawOverlaysVita2D_WithHud() {
                 const float sy_world  = (float)scy;
                 // HUD global scale on top of world scale
                 const float sx_full   = sx_world * kHudScale;
-                const float sy_full   = sy_world * kHudScale;
+                const float sy_full   = sy_world * kHudScale * kHudScaleY;
                 const float sx_narrow = sx_full * kHudNarrowX; // 15% narrower in X
 
                 // Letterbox origin for full-width (unscaled X)
