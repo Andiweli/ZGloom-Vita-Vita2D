@@ -109,6 +109,13 @@ static void MenuSetAtmosVolume_Apply(int v) {
     Config::Save();
 }
 
+
+static int MenuGetAtmosphericDust() { return Config::GetDustEnabled(); }
+static void MenuSetAtmosphericDust(int on) {
+    Config::SetDustEnabled(on != 0);
+    Config::Save();
+}
+
 // --- Display Profiles: apply multiple options with one click ---
 static void MenuApplyProfileClassic(int /*unused*/) {
     // 50 FPS, almost no post effects
@@ -252,6 +259,7 @@ MenuScreen::MenuScreen()
     //HALBEZEILE//
     displaymenu.push_back(MenuEntry("BLOOD INTENSITY: ", ACTION_INT, 6, Config::GetBlood, Config::SetBlood));
     displaymenu.push_back(MenuEntry("MUZZLE FLASH AND REFLECTION: ", ACTION_BOOL, 0, Config::GetMuzzleFlash, Config::SetMuzzleFlash));
+    displaymenu.push_back(MenuEntry("ATMOSPHERIC DUST: ", ACTION_BOOL, 0, MenuGetAtmosphericDust, MenuSetAtmosphericDust));
     displaymenu.push_back(MenuEntry("BLOB SHADOWS: ", ACTION_BOOL, 0, Config::GetBlobShadows, Config::SetBlobShadows));
     //HALBEZEILE//
     displaymenu.push_back(MenuEntry("ATMOSPHERIC VIGNETTE: ", ACTION_BOOL, 0, Config::GetVignetteEnabled, Config::SetVignetteEnabled));

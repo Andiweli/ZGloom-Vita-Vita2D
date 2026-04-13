@@ -185,7 +185,7 @@ endif()
 # -----------------------------------------------------------
 # Added by patch: streaming-texture bridge
 # CPU Muzzle Flash one-frame
-target_sources(${PROJECT_NAME} PRIVATE src/effects/MuzzleFlashFX.cpp)
+target_sources(${PROJECT_NAME} PRIVATE src/effects/MuzzleFlashFX.cpp src/effects/Dust_Particles.cpp)
 
 # --- EventReplay (save/load event re-trigger) ---
 target_sources(${PROJECT_NAME} PRIVATE src/EventReplay.cpp)

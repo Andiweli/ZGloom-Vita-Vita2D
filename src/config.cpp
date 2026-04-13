@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <string>
+#include <algorithm>
 
 #include <psp2/ctrl.h>
 #include <string>
@@ -65,6 +66,11 @@ namespace Config
 	
 	static int atmosVolume9 = 7;
 	static xmp_context musctx;
+	static bool dustenabled = false;
+	static float dustdensity = 1.0f;
+	static float dustvisibility = 1.0f;
+	static float dustspeedscale = 1.0f;
+	static bool dustplayerinfluence = true;
 
 	// needed to toggle fullscreen
 	static SDL_Window *win;
@@ -538,6 +544,56 @@ namespace Config
 		bloodsize = b;
 	}
 
+	int GetDustEnabled()
+	{
+		return dustenabled ? 1 : 0;
+	}
+
+	void SetDustEnabled(int on)
+	{
+		dustenabled = (on != 0);
+	}
+
+	float GetDustDensity()
+	{
+		return dustdensity;
+	}
+
+	void SetDustDensity(float v)
+	{
+		dustdensity = std::max(0.0f, std::min(v, 4.0f));
+	}
+
+	float GetDustVisibility()
+	{
+		return dustvisibility;
+	}
+
+	void SetDustVisibility(float v)
+	{
+		dustvisibility = std::max(0.0f, std::min(v, 4.0f));
+	}
+
+	float GetDustSpeedScale()
+	{
+		return dustspeedscale;
+	}
+
+	void SetDustSpeedScale(float v)
+	{
+		dustspeedscale = std::max(0.1f, std::min(v, 4.0f));
+	}
+
+	int GetDustPlayerInfluence()
+	{
+		return dustplayerinfluence ? 1 : 0;
+	}
+
+	void SetDustPlayerInfluence(int on)
+	{
+		dustplayerinfluence = (on != 0);
+	}
+
 	int GetVignette()
 	{
 		return atmosVignette ? 1 : 0;
@@ -743,6 +799,11 @@ namespace Config
         file << "SCAN_I="        << Config::GetScanlineIntensity()    << "\n";
         file << "MUZZLE="        << Config::GetMuzzleFlash()          << "\n";
         file << "BLOB="          << Config::GetBlobShadows()          << "\n";
+        file << "DUST="          << Config::GetDustEnabled()          << "\n";
+        file << "DUSTDENSITY="   << Config::GetDustDensity()          << "\n";
+        file << "DUSTVISIBILITY="<< Config::GetDustVisibility()       << "\n";
+        file << "DUSTSPEED="     << Config::GetDustSpeedScale()       << "\n";
+        file << "DUSTPLAYERINFLUENCE=" << Config::GetDustPlayerInfluence() << "\n";
         file << "BILINEAR="      << Config::GetBilinearFilter()       << "\n";
 
         file.close();
@@ -811,6 +872,10 @@ namespace Config
 			auto parse_int = [](const char *v) -> int
 			{
 				return std::atoi(v);
+			};
+			auto parse_float = [](const char *v) -> float
+			{
+				return std::strtof(v, nullptr);
 			};
 			auto parse_wh = [](const char *v, int &w, int &h) -> bool
 			{
@@ -955,6 +1020,26 @@ namespace Config
 			{
 				SetBilinearFilter(parse_int(val));
 			}
+			else if (ieq(key, "DUST"))
+			{
+				SetDustEnabled(parse_int(val) != 0);
+			}
+			else if (ieq(key, "DUSTDENSITY"))
+			{
+				SetDustDensity(parse_float(val));
+			}
+			else if (ieq(key, "DUSTVISIBILITY"))
+			{
+				SetDustVisibility(parse_float(val));
+			}
+			else if (ieq(key, "DUSTSPEED"))
+			{
+				SetDustSpeedScale(parse_float(val));
+			}
+			else if (ieq(key, "DUSTPLAYERINFLUENCE"))
+			{
+				SetDustPlayerInfluence(parse_int(val) != 0);
+			}
 		}
 		std::fclose(f);
 	}
@@ -1062,6 +1147,11 @@ namespace Config
     std::fprintf(out, "MUZZLE=%d\n", GetMuzzleFlash());
     std::fprintf(out, "BILINEAR=%d\n", GetBilinearFilter());
     std::fprintf(out, "BLOB=%d\n", GetBlobShadows());
+    std::fprintf(out, "DUST=%d\n", GetDustEnabled());
+    std::fprintf(out, "DUSTDENSITY=%g\n", GetDustDensity());
+    std::fprintf(out, "DUSTVISIBILITY=%g\n", GetDustVisibility());
+    std::fprintf(out, "DUSTSPEED=%g\n", GetDustSpeedScale());
+    std::fprintf(out, "DUSTPLAYERINFLUENCE=%d\n", GetDustPlayerInfluence());
 
     std::fclose(out);
 }

@@ -5,6 +5,7 @@
 #include "gloommaths.h"
 #include "quick.h"
 #include "objectgraphics.h"
+#include "effects/Dust_Particles.h"
 
 #include <SDL2/SDL.h>
 
@@ -79,6 +80,7 @@ class Renderer
 		void DrawCeil(Camera* camera);
 		void DrawObjects(Camera* camera);
 		void DrawBlood(Camera* camera);
+		void DrawDust(Camera* camera, float dt);
 		Column* GetTexColumn(int hitzone, Quick texpos, int& basetexture);
 		void ProcessColumn(const uint32_t& x, const int16_t& y, std::vector<int32_t>& ceilend, std::vector<int32_t>& floorstart);
 
@@ -154,6 +156,12 @@ class Renderer
 		};
 
 		std::list<MapObject> strips;
+		DustParticleSystem dustsystem;
+		std::vector<DustRenderParticle> dustrendercache;
+		int32_t lastdustcamx = 0;
+		int32_t lastdustcamz = 0;
+		bool dustcamvalid = false;
+		Uint32 dustlastticks = 0;
 
 		// needed for pushing transparent strips
 		SDL_mutex* wallmutex;

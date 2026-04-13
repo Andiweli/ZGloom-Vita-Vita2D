@@ -15,7 +15,7 @@ void TitleScreen::Render(SDL_Surface *src, SDL_Surface *dest, Font &font)
     SDL_BlitSurface(src, nullptr, dest, nullptr);
     bool flash = (timer / 5) & 1;
 
-    font.PrintMessage("ZGLOOM PSVITA 11.2025", 245, dest, 1);
+    font.PrintMessage("ZGLOOM PSVITA 04.2026", 245, dest, 1);
 
     if (status == TITLESTATUS_MAIN)
     {

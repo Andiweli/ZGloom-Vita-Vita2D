@@ -55,6 +55,16 @@ namespace Config
 	void SetBlood(int b);
 	int  GetMuzzleFlash();
 	void SetMuzzleFlash(int on);
+	int GetDustEnabled();
+	void SetDustEnabled(int on);
+	float GetDustDensity();
+	void SetDustDensity(float v);
+	float GetDustVisibility();
+	void SetDustVisibility(float v);
+	float GetDustSpeedScale();
+	void SetDustSpeedScale(float v);
+	int GetDustPlayerInfluence();
+	void SetDustPlayerInfluence(int on);
 
 	int  GetBilinearFilter();
 	void SetBilinearFilter(int on);
