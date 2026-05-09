@@ -1025,29 +1025,35 @@ if (playerobj.data.ms.mega)
 			{
 				if (gmap->GetZones()[closestzone].ev > 1)
 				{
-					if (gmap->GetZones()[closestzone].ev == 24)
+					const uint32_t eventnum = gmap->GetZones()[closestzone].ev;
+					const bool levelExitEvent = (eventnum == 24);
+
+					if (levelExitEvent)
 					{
 						levelfinished = true;
 						SoundHandler::Play(SoundHandler::SOUND_TELEPORT);
 						playerobj.data.ms.pixsizeadd = 1;
 					}
 
-					if (!eventhit[gmap->GetZones()[closestzone].ev])
+					if (!eventhit[eventnum])
 					{
-						gmap->ExecuteEvent(gmap->GetZones()[closestzone].ev, gotele, tele);
-							EventReplay::Record(gmap->GetZones()[closestzone].ev);
+						// Event 24 is the Amiga level-exit trigger.  Execute its script,
+						// but do not allow a teleport command in that script to replace
+						// the slow blue beam-out with the normal fast teleport animation.
+						gmap->ExecuteEvent(eventnum, gotele, tele, !levelExitEvent);
+						EventReplay::Record(eventnum);
 					}
 
 					// these are one-shot
-					if (gmap->GetZones()[closestzone].ev < 19)
+					if (eventnum < 19)
 					{
-						eventhit[gmap->GetZones()[closestzone].ev] = true;
+						eventhit[eventnum] = true;
 					}
 				}
 			}
 		}
 
-		if (gotele)
+		if (gotele && !levelfinished)
 		{
 			// teleport animation
 			activetele = tele;

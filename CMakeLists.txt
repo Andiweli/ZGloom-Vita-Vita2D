@@ -38,7 +38,7 @@ endif()
 
 set(VITA_APP_NAME "Gloom Collection")
 set(VITA_TITLEID  "ZGLOOMCOL")
-set(VITA_VERSION  "11.25")
+set(VITA_VERSION  "05.26")
 
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=gnu11")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -fpermissive")
