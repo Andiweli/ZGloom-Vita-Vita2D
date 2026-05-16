@@ -23,6 +23,7 @@ class TitleScreen
 		TitleScreen();
 		void Render(SDL_Surface* src, SDL_Surface* dest, Font& font);
 		void Clock() { timer++; };
+		bool WantsPlainTitleBackground() const { return status != TITLESTATUS_MAIN; };
 		TitleReturn Update(int& levelout);
 		void SetLevels(std::vector<std::string> names) 
 		{

@@ -15,7 +15,7 @@ void TitleScreen::Render(SDL_Surface *src, SDL_Surface *dest, Font &font)
     SDL_BlitSurface(src, nullptr, dest, nullptr);
     bool flash = (timer / 5) & 1;
 
-    font.PrintMessage("ZGLOOM PSVITA 05.2026", 245, dest, 1);
+    font.PrintMessage("ZGLOOM PSVITA 05.2026 v2", 245, dest, 1);
 
     if (status == TITLESTATUS_MAIN)
     {
@@ -25,7 +25,8 @@ void TitleScreen::Render(SDL_Surface *src, SDL_Surface *dest, Font &font)
         const int idxGame    = idxStart + 2;
         const int idxQuit    = idxStart + 3;
 
-        int y = 150;
+        // Original-style placement: menu sits above the lower gloom logo overlay.
+        int y = hasResume ? 91 : 98;
 
         if (hasResume) {
             if (flash || (selection != 0)) font.PrintMessage("RESUME SAVED POSITION", y, dest, 1);
