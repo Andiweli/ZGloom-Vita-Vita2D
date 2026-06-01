@@ -7,6 +7,7 @@ Vita2D-based, GPU-accelerated port of the modern **ZGloom** engine, bringing the
 [![Latest release](https://img.shields.io/github/v/release/andiweli/ZGloom-Vita-Vita2D?label=latest%20Vita%20release)](https://github.com/andiweli/ZGloom-Vita-Vita2D/releases/latest)
 [![Platform](https://img.shields.io/badge/platform-PS%20Vita%20%2F%20PSTV-blue)](https://github.com/andiweli/ZGloom-Vita-Vita2D)
 [![Engine](https://img.shields.io/badge/renderer-Vita2D%20GPU%20%2B%20LibXMP-brightgreen.svg)](https://github.com/andiweli/ZGloom-Vita-Vita2D)
+![AI](https://img.shields.io/badge/AI-assisted%20coding-6e7781)
 
 ZGloom-Vita-Vita2D is the Vita2D follow-up to the original SDL ZGloom-Vita port, focusing on stable framerates, improved rendering and a console-style experience on Sony’s handhelds.
 
