@@ -5,11 +5,6 @@
 #include "cheats/CheatSystem.h"
 #include "EmbeddedBGMVolume.h"  // apply ATMOS immediately when changed
 
-// --- Non-selectable label entries for menu headings ---
-#ifndef ACTION_LABEL
-#define ACTION_LABEL (MenuScreen::MenuEntryAction)99
-#endif
-
 // 60% Blend eines einfarbigen Balkens auf ein 32-bit SDL_Surface
 static void FillRect75(SDL_Surface* surf, const SDL_Rect& rect, Uint8 rBg, Uint8 gBg, Uint8 bBg)
 {
@@ -116,12 +111,16 @@ static void MenuSetAtmosphericDust(int on) {
     Config::Save();
 }
 
-// --- Display Profiles: apply multiple options with one click ---
+// --- Display Profiles: apply the complete profile deterministically. ---
+// MAX. FPS 50 is deliberately OFF in all three profiles; on Vita this keeps
+// the original 30 FPS cadence and leaves enough headroom for the selected FX.
 static void MenuApplyProfileClassic(int /*unused*/) {
-    // 50 FPS, almost no post effects
-    Config::SetMaxFpsBool(1);          // 50 FPS
+    Config::SetMaxFpsBool(0);
     Config::SetBilinearFilter(0);
+    Config::SetBloodMode(0);
     Config::SetMuzzleFlash(0);
+    Config::SetReflections(0);
+    Config::SetDustEnabled(0);
     Config::SetBlobShadows(0);
 
     Config::SetVignetteEnabled(0);
@@ -139,20 +138,22 @@ static void MenuApplyProfileClassic(int /*unused*/) {
 }
 
 static void MenuApplyProfileBalanced(int /*unused*/) {
-    // 50 FPS with moderate eye-candy
-    Config::SetMaxFpsBool(0);          // 50 FPS
-    Config::SetBilinearFilter(1);
+    Config::SetMaxFpsBool(0);
+    Config::SetBilinearFilter(0);
+    Config::SetBloodMode(1);           // SPLATTER
     Config::SetMuzzleFlash(1);
+    Config::SetReflections(1);         // OBJECTS
+    Config::SetDustEnabled(1);
     Config::SetBlobShadows(1);
 
     Config::SetVignetteEnabled(1);
     Config::SetVignetteStrength(1);
     Config::SetVignetteRadius(5);
     Config::SetVignetteSoftness(5);
-    Config::SetVignetteWarmth(0);
+    Config::SetVignetteWarmth(0);      // COLD
 
-    Config::SetFilmGrain(1);
-    Config::SetFilmGrainIntensity(2);
+    Config::SetFilmGrain(0);
+    Config::SetFilmGrainIntensity(0);
     Config::SetScanlines(0);
     Config::SetScanlineIntensity(0);
 
@@ -160,21 +161,24 @@ static void MenuApplyProfileBalanced(int /*unused*/) {
 }
 
 static void MenuApplyProfileExtreme(int /*unused*/) {
-    // 30 FPS and all effects ON
-    Config::SetMaxFpsBool(0);          // 30 FPS
-    Config::SetBilinearFilter(1);
+    // BALANCED plus MASSACRE, ALL reflections and film grain intensity 2.
+    Config::SetMaxFpsBool(0);
+    Config::SetBilinearFilter(0);
+    Config::SetBloodMode(2);           // MASSACRE
     Config::SetMuzzleFlash(1);
+    Config::SetReflections(2);         // ALL
+    Config::SetDustEnabled(1);
     Config::SetBlobShadows(1);
 
     Config::SetVignetteEnabled(1);
-    Config::SetVignetteStrength(4);
-    Config::SetVignetteRadius(3);
-    Config::SetVignetteSoftness(3);
-    Config::SetVignetteWarmth(5);
+    Config::SetVignetteStrength(1);
+    Config::SetVignetteRadius(5);
+    Config::SetVignetteSoftness(5);
+    Config::SetVignetteWarmth(0);      // COLD
 
     Config::SetFilmGrain(1);
-    Config::SetFilmGrainIntensity(3);
-    Config::SetScanlines(1);
+    Config::SetFilmGrainIntensity(2);
+    Config::SetScanlines(0);
     Config::SetScanlineIntensity(0);
 
     Config::EffectsConfigSave();
@@ -217,6 +221,7 @@ MenuScreen::MenuScreen()
     status = MENUSTATUS_MAIN;
     selection = 0;
     timer = 0;
+    for (int i = 0; i < 6; ++i) { parentStatus[i] = MENUSTATUS_MAIN; parentSelection[i] = 0; }
 
     Cheats::Init("ux0:/data/ZGloom/cheats.txt");
 
@@ -257,8 +262,9 @@ MenuScreen::MenuScreen()
     displaymenu.push_back(MenuEntry("MAX. FPS 50: ", ACTION_BOOL, 0, Config::GetMaxFpsBool, Config::SetMaxFpsBool));
     displaymenu.push_back(MenuEntry("BILINEAR FILTER: ", ACTION_BOOL, 0, Config::GetBilinearFilter, Config::SetBilinearFilter));
     //HALBEZEILE//
-    displaymenu.push_back(MenuEntry("BLOOD INTENSITY: ", ACTION_INT, 6, Config::GetBlood, Config::SetBlood));
-    displaymenu.push_back(MenuEntry("MUZZLE FLASH AND REFLECTION: ", ACTION_BOOL, 0, Config::GetMuzzleFlash, Config::SetMuzzleFlash));
+    displaymenu.push_back(MenuEntry("BLOOD: ", ACTION_INT, 3, Config::GetBloodMode, Config::SetBloodMode));
+    displaymenu.push_back(MenuEntry("MUZZLE FLASH: ", ACTION_BOOL, 0, Config::GetMuzzleFlash, Config::SetMuzzleFlash));
+    displaymenu.push_back(MenuEntry("REFLECTIONS: ", ACTION_INT, 3, Config::GetReflections, Config::SetReflections));
     displaymenu.push_back(MenuEntry("ATMOSPHERIC DUST: ", ACTION_BOOL, 0, MenuGetAtmosphericDust, MenuSetAtmosphericDust));
     displaymenu.push_back(MenuEntry("BLOB SHADOWS: ", ACTION_BOOL, 0, Config::GetBlobShadows, Config::SetBlobShadows));
     //HALBEZEILE//
@@ -352,6 +358,36 @@ MenuScreen::MenuReturn MenuScreen::HandleStandardMenu(std::vector<MenuEntry> &me
             guard++;
         } while (!menu.empty() && menu[selection].action == ACTION_LABEL && guard < (int)menu.size());
     }
+    else if (Input::GetButtonDown(SCE_CTRL_LEFT))
+    {
+        // D-pad navigation for values: LEFT selects OFF or steps backwards.
+        if (menu[selection].action == ACTION_BOOL)
+        {
+            menu[selection].setval(0);
+        }
+        else if (menu[selection].action == ACTION_INT)
+        {
+            int x = menu[selection].getval() - 1;
+            if (x < 0)
+                x = menu[selection].arg - 1;
+            menu[selection].setval(x);
+        }
+    }
+    else if (Input::GetButtonDown(SCE_CTRL_RIGHT))
+    {
+        // D-pad navigation for values: RIGHT selects ON or steps forwards.
+        if (menu[selection].action == ACTION_BOOL)
+        {
+            menu[selection].setval(1);
+        }
+        else if (menu[selection].action == ACTION_INT)
+        {
+            int x = menu[selection].getval() + 1;
+            if (x >= menu[selection].arg)
+                x = 0;
+            menu[selection].setval(x);
+        }
+    }
     else if (Input::GetButtonDown(SCE_CTRL_CROSS))
     {
         switch (menu[selection].action)
@@ -371,8 +407,20 @@ MenuScreen::MenuReturn MenuScreen::HandleStandardMenu(std::vector<MenuEntry> &me
         }
         case ACTION_SWITCHMENU:
         {
-            status = (MENUSTATUS)menu[selection].arg;
-            selection = 1; // focus first clickable entry (after label) so it blinks
+            const MENUSTATUS next = (MENUSTATUS)menu[selection].arg;
+            if (next != MENUSTATUS_MAIN)
+            {
+                parentStatus[next] = status;
+                parentSelection[next] = selection;
+                status = next;
+                selection = 1;
+            }
+            else
+            {
+                const MENUSTATUS old = status;
+                status = MENUSTATUS_MAIN;
+                selection = parentSelection[old];
+            }
             break;
         }
         case ACTION_RETURN:
@@ -408,8 +456,13 @@ MenuScreen::MenuReturn MenuScreen::HandleStandardMenu(std::vector<MenuEntry> &me
     {
         if (status != MENUSTATUS_MAIN)
         {
-            status = MENUSTATUS_MAIN;
-            selection = 0;
+            const MENUSTATUS old = status;
+            status = parentStatus[old];
+            selection = parentSelection[old];
+        }
+        else
+        {
+            return MENURET_PLAY;
         }
     }
 
@@ -460,7 +513,9 @@ MenuScreen::MenuReturn MenuScreen::Update()
 
 void MenuScreen::DisplayStandardMenu(std::vector<MenuEntry> &menu, bool flash, int scale, SDL_Surface *dest, Font &font)
 {
-    int starty = 40 * scale;
+    // The long DISPLAY AND GRAPHICS OPTIONS list needs two extra rows.
+    // Start it 20 logical pixels higher; all other menus retain their layout.
+    int starty = ((&menu == &displaymenu) ? 20 : 40) * scale;
     int yinc = 10 * scale;
 
     for (size_t i = 0; i < menu.size(); i++)
@@ -512,7 +567,7 @@ if (menu[i].action == ACTION_LABEL) {
             menu[i].name == std::string("RAPIDFIRE: ") ||
             menu[i].name == std::string("SOUND FX VOLUME: ") ||
             menu[i].name == std::string("MAX. FPS 50: ") ||
-            menu[i].name == std::string("BLOOD INTENSITY: ") ||
+            menu[i].name == std::string("BLOOD: ") ||
             menu[i].name == std::string("ATMOSPHERIC VIGNETTE: ") ||
             menu[i].name == std::string("FILM GRAIN: ") ||
             menu[i].name == std::string("SCANLINES: ") ||
@@ -537,6 +592,12 @@ if (menu[i].action == ACTION_LABEL) {
                     // Custom text for START WEAPON cheat; other ints stay numeric
                     if (menustring.rfind("WEAPON", 0) == 0) {
                         menustring += MenuGetWeaponNameFromIndex(v);
+                    } else if (menustring.rfind("BLOOD", 0) == 0) {
+                        static const char* names[] = { "OFF", "SPLATTER", "MASSACRE" };
+                        menustring += names[(v < 0 || v > 2) ? 0 : v];
+                    } else if (menustring.rfind("REFLECTIONS", 0) == 0) {
+                        static const char* names[] = { "OFF", "OBJECTS", "ALL" };
+                        menustring += names[(v < 0 || v > 2) ? 0 : v];
                     } else {
                         menustring += std::to_string(v);
                     }

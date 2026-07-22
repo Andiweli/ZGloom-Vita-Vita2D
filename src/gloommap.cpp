@@ -2,135 +2,118 @@
 #include "gloommaths.h"
 #include "monsterlogic.h"
 #include "config.h"
+#include "soundhandler.h"
+#include "SaveSystem.h"
+#include "EventReplay.h"
+#include <cstring>
 
-//#include "soundhandler.h"
 
-static uint16_t Get16(const uint8_t *p)
+static uint16_t Get16(const uint8_t* p)
 {
 	return (static_cast<uint16_t>(p[0])) << 8 | static_cast<uint16_t>(p[1]);
 }
 
-static uint32_t Get32(const uint8_t *p)
+static uint32_t Get32(const uint8_t* p)
 {
 	return (static_cast<uint16_t>(p[0])) << 24 | (static_cast<uint16_t>(p[1]) << 16) | (static_cast<uint16_t>(p[2])) << 8 | (static_cast<uint16_t>(p[3]) << 0);
 }
 
-void Event::Load(const uint8_t *data, uint32_t evnum, std::vector<Object> &objects, std::vector<Door> &doors, std::vector<TextureChange> &tchanges,
-				 std::vector<RotPoly> &rotpolys, std::vector<Teleport> &teles)
+void Event::Load(const uint8_t* data, uint32_t evnum, std::vector<Object>& objects, std::vector<Door>& doors, std::vector<TextureChange>& tchanges, 
+				 std::vector<RotPoly>& rotpolys, std::vector<Teleport>& teles)
 {
 	uint16_t op;
+	int16_t lastChangedTexture = -1;
 
 	do
 	{
-		op = Get16(data);
-		data += 2;
+		op = Get16(data); data += 2;
 
 		switch (op)
 		{
-		case ET_ADDMONSTER:
-			Object o;
-			o.t = Get16(data);
-			data += 2;
-			o.x = Get16(data);
-			data += 2;
-			o.y = Get16(data);
-			data += 2;
-			o.z = Get16(data);
-			data += 2;
-			o.rot = (uint8_t)Get16(data);
-			data += 2;
-			// whats all this? Does the editor use a different coordinate system to the game itself?
-			//o.rot = (192 - o.rot + 128) & 255;
+			case ET_ADDMONSTER:
+				Object o;
+				o.t = Get16(data); data += 2;
+				o.x = Get16(data); data += 2;
+				o.y = Get16(data); data += 2;
+				o.z = Get16(data); data += 2;
+				o.rot = (uint8_t)Get16(data); data += 2;
+				// whats all this? Does the editor use a different coordinate system to the game itself?
+				//o.rot = (192 - o.rot + 128) & 255;
 
-			o.ev = evnum;
+				o.ev = evnum;
 
-			if (o.t != 3) // dunno. unused "weapon" type?
+				if (o.t != 3) // dunno. unused "weapon" type?
+				{
+					objects.push_back(o);
+				}
+				break;
+			case ET_OPENDOOR:
+				Door door;
+				door.zone = Get16(data); data+=2;
+				door.eventnum = evnum;
+				doors.push_back(door);
+				break;
+
+			case ET_TELEPORT:
 			{
-				objects.push_back(o);
+				Teleport tele;
+
+				tele.x = Get16(data); data += 2;
+				tele.y = Get16(data); data += 2;
+				tele.z = Get16(data); data += 2;
+				tele.rot = Get16(data); data += 2;
+				tele.ev = evnum;
+				tele.textureIndex = lastChangedTexture;
+				teles.push_back(tele);
+				break;
 			}
-			break;
-		case ET_OPENDOOR:
-			Door door;
-			door.zone = Get16(data);
-			data += 2;
-			door.eventnum = evnum;
-			doors.push_back(door);
-			break;
+				
+			case ET_LOADOBJECTS:
+				// ignore - we'll load everything
+				int16_t temp;
+				do
+				{
+					temp = Get16(data); data += 2;
+				} while (temp >= 0);
+				break;
 
-		case ET_TELEPORT:
-			Teleport tele;
+			case ET_CHANGETEXTURE:
+				TextureChange tc;
+				tc.zone = Get16(data); data += 2;
+				tc.newtexture = Get16(data); data += 2;
+				tc.ev = evnum;
+				lastChangedTexture = static_cast<int16_t>(tc.newtexture);
+				tchanges.push_back(tc);
+				break;
 
-			tele.x = Get16(data);
-			data += 2;
-			tele.y = Get16(data);
-			data += 2;
-			tele.z = Get16(data);
-			data += 2;
-			tele.rot = Get16(data);
-			data += 2;
-			tele.ev = evnum;
-			teles.push_back(tele);
-			break;
+			case ET_ROTATEPOLY:
+				RotPoly r;
+				r.polynum = Get16(data); data += 2;
+				r.count = Get16(data); data += 2;
+				r.speed = Get16(data); data += 2;
+				r.flags = Get16(data); data += 2;
+				r.ev = evnum;
+				rotpolys.push_back(r);
+				break;
 
-		case ET_LOADOBJECTS:
-			// ignore - we'll load everything
-			int16_t temp;
-			do
-			{
-				temp = Get16(data);
-				data += 2;
-			} while (temp >= 0);
-			break;
-
-		case ET_CHANGETEXTURE:
-			TextureChange tc;
-			tc.zone = Get16(data);
-			data += 2;
-			tc.newtexture = Get16(data);
-			data += 2;
-			tc.ev = evnum;
-			tchanges.push_back(tc);
-			break;
-
-		case ET_ROTATEPOLY:
-			RotPoly r;
-			r.polynum = Get16(data);
-			data += 2;
-			r.count = Get16(data);
-			data += 2;
-			r.speed = Get16(data);
-			data += 2;
-			r.flags = Get16(data);
-			data += 2;
-			r.ev = evnum;
-			rotpolys.push_back(r);
-			break;
 		}
 	} while (op != 0);
+
 }
 
-void Zone::Load(const uint8_t *data)
+
+void Zone::Load(const uint8_t* data)
 {
-	ztype = Get16(data);
-	data += 2;
-	x1 = Get16(data);
-	data += 2;
-	z1 = Get16(data);
-	data += 2;
-	x2 = Get16(data);
-	data += 2;
-	z2 = Get16(data);
-	data += 2;
-	a = Get16(data);
-	data += 2;
-	b = Get16(data);
-	data += 2;
-	na = Get16(data);
-	data += 2;
-	nb = Get16(data);
-	data += 2;
-	ln = Get16(data);
-	data += 2;
+	ztype = Get16(data); data += 2;
+	x1 = Get16(data); data += 2;
+	z1 = Get16(data); data += 2;
+	x2 = Get16(data); data += 2;
+	z2 = Get16(data); data += 2;
+	a = Get16(data); data += 2;
+	b = Get16(data); data += 2;
+	na = Get16(data); data += 2;
+	nb = Get16(data); data += 2;
+	ln = Get16(data); data += 2;
 
 	for (auto i = 0; i < 8; i++)
 	{
@@ -139,15 +122,13 @@ void Zone::Load(const uint8_t *data)
 
 	data += 8;
 
-	sc = Get16(data);
-	data += 2;
-	ev = Get16(data);
-	data += 2;
+	sc = Get16(data); data += 2;
+	ev = Get16(data); data += 2;
 
 	open = 0;
 }
 
-void Zone::DumpDebug(FILE *fFile)
+void Zone::DumpDebug(FILE* fFile)
 {
 	const int32_t offset = 32000;
 
@@ -180,7 +161,7 @@ void Zone::DumpDebug(FILE *fFile)
 	}
 }
 
-void Texture::Load(const char *name)
+void Texture::Load(const char* name)
 {
 	std::string fname = Config::GetGamePath() + "/txts/";
 
@@ -201,7 +182,7 @@ void Texture::Load(const char *name)
 	}
 
 	//now do the palette. 4 bits (at least on original gloom?)
-	// 0 appears to not be stored, as is the mask entry
+	// 0 appears to not be stored, as is the mask entry 
 	palette[0][0] = 0;
 	palette[0][1] = 0;
 	palette[0][2] = 0;
@@ -223,12 +204,12 @@ void Texture::Load(const char *name)
 	}
 }
 
-void Texture::DumpDebug(const char *name)
+void Texture::DumpDebug(const char* name)
 {
 	//dump a ppm file
-	FILE *file = fopen(name, "wb");
+	FILE* file = fopen(name, "wb");
 
-	fprintf(file, "P6\n64 %i\n255\n", columns.size());
+	fprintf(file, "P6\n64 %lu\n255\n", (unsigned long)columns.size());
 
 	for (size_t c = 0; c < columns.size(); c++)
 	{
@@ -244,7 +225,7 @@ void Texture::DumpDebug(const char *name)
 	fclose(file);
 }
 
-bool GloomMap::Load(const char *name, ObjectGraphics *nobj)
+bool GloomMap::Load(const char* name, ObjectGraphics* nobj)
 {
 	doors.clear();
 	objects.clear();
@@ -257,6 +238,8 @@ bool GloomMap::Load(const char *name, ObjectGraphics *nobj)
 	activerotpolys.clear();
 	teles.clear();
 	activeblood.clear();
+	bloodpools.clear();
+	wallbloodsplats.clear();
 
 	objectlogic = nobj;
 
@@ -290,7 +273,7 @@ bool GloomMap::Load(const char *name, ObjectGraphics *nobj)
 	polyoff = Get32(rawdata.data + 4);
 	polypnt = Get32(rawdata.data + 8);
 	animpnt = Get32(rawdata.data + 12);
-	txtnames = Get32(rawdata.data + 16);
+	txtnames= Get32(rawdata.data +16);
 
 	for (auto e = 0; e < numevents; e++)
 	{
@@ -370,7 +353,7 @@ bool GloomMap::Load(const char *name, ObjectGraphics *nobj)
 
 	for (auto e = 0; e < numevents; e++)
 	{
-		// this starts at 1.
+		// this starts at 1. 
 		events[e].Load(rawdata.data + eventpointers[e], e + 1, objects, doors, tchanges, rotpolys, teles);
 	}
 
@@ -447,13 +430,12 @@ bool GloomMap::Load(const char *name, ObjectGraphics *nobj)
 	{
 		// G3 (and others?) occasionally have short textures
 		//texturestotal += textures[t].columns.size() / 64;
-		if (textures[t].columns.size())
-			texturestotal += 20;
+		if (textures[t].columns.size()) texturestotal += 20;
 	}
 
 	for (auto i = 0; i < 160; i++)
 	{
-		if (i < texturestotal)
+		if (i<texturestotal)
 		{
 			if ((64 * (i % 20)) < (int)textures[i / 20].columns.size())
 			{
@@ -468,29 +450,37 @@ bool GloomMap::Load(const char *name, ObjectGraphics *nobj)
 	return true;
 }
 
-void GloomMap::SetFlat(char f)
+bool GloomMap::SetFlat(int f)
 {
+	if (f < 0)
+		return false;
+
+	const std::string suffix = std::to_string(f);
+	const std::string floorName = Config::GetGamePath() + "/txts/floor" + suffix;
+	const std::string roofName  = Config::GetGamePath() + "/txts/roof" + suffix;
+
+	// Load both surfaces into temporary objects first.  This prevents a failed
+	// roof load from leaving a new floor paired with the previous ceiling.
+	Flat newFloor;
+	Flat newCeil;
+	if (!newFloor.Load(floorName.c_str()) || !newCeil.Load(roofName.c_str()))
+		return false;
+
+	floor = newFloor;
+	ceil = newCeil;
 	hasflat = true;
 
-	std::string name = Config::GetGamePath() + "/txts/floor";
-
-	name += f + '0';
-
-	floor.Load(name.c_str());
-
-	name = Config::GetGamePath() + "/txts/roof";
-
-	name += f + '0';
-
-	ceil.Load(name.c_str());
-	return;
+	SaveSystem::SetCurrentFlat(f);
+	return true;
 }
 
-void Flat::Load(const char *name)
+bool Flat::Load(const char* name)
 {
 	CrmFile file;
+	if (!file.Load(name) || !file.data || file.size < 128 * 128)
+		return false;
 
-	file.Load(name);
+	std::memset(palette, 0, sizeof(palette));
 
 	for (int x = 0; x < 128; x++)
 	{
@@ -501,10 +491,10 @@ void Flat::Load(const char *name)
 		}
 	}
 
-	// makeflat also indicates it dumps out the depth, but this isn't present in the files I've seen
-
+	// makeflat also indicates it dumps out the depth, but this isn't present
+	// in the files currently used by the supported games.
 	uint32_t palpos = 0;
-	for (uint32_t p = 128 * 128; p < file.size; p += 2)
+	for (uint32_t p = 128 * 128; p + 1 < file.size && palpos < 256; p += 2)
 	{
 		palette[palpos][0] = file.data[p + 0] & 0xF;
 		palette[palpos][1] = file.data[p + 1] >> 4;
@@ -517,13 +507,13 @@ void Flat::Load(const char *name)
 		palpos++;
 	}
 
-	return;
+	return true;
 }
 
-void Flat::DumpDebug(const char *name)
+void Flat::DumpDebug(const char* name)
 {
 	//dump a ppm file
-	FILE *file = fopen(name, "wb");
+	FILE* file = fopen(name, "wb");
 
 	fprintf(file, "P6\n128 128\n255\n");
 
@@ -543,7 +533,7 @@ void Flat::DumpDebug(const char *name)
 
 void GloomMap::DumpDebug()
 {
-	FILE *fFile = fopen("debug.svg", "w");
+	FILE* fFile = fopen("debug.svg", "w");
 
 	fprintf(fFile, "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"no\"?>\n");
 	fprintf(fFile, "<svg width=\"32000\" height=\"32000\" xmlns=\"http://www.w3.org/2000/svg\">\n");
@@ -571,63 +561,97 @@ void GloomMap::DumpDebug()
 	}
 }
 
-void GloomMap::ExecuteEvent(uint32_t e, bool& gotele, Teleport& teleout, bool allowTeleport)
+bool GloomMap::ResolveTextureColumns(int textureIndex, std::vector<Column>*& outColumns, std::size_t& outBaseColumn)
 {
-	// add objects?
+	outColumns = nullptr;
+	outBaseColumn = 0;
 
-	// DEMOS events seem off by one?
+	if (textureIndex < 0 || textureIndex >= 160)
+		return false;
+
+	const int fileIndex = textureIndex / 20;
+	const int textureInFile = textureIndex % 20;
+	if (fileIndex < 0 || fileIndex >= 8)
+		return false;
+
+	const std::size_t base = static_cast<std::size_t>(textureInFile) * 64u;
+	if (textures[fileIndex].columns.size() < base + 64u)
+		return false;
+
+	outColumns = &textures[fileIndex].columns;
+	outBaseColumn = base;
+	return true;
+}
+
+void GloomMap::ExecuteEvent(uint32_t e, bool& gotele, Teleport& teleout, bool allowTeleport, EventExecutionMode mode)
+{
+	const bool persistentReplay = (mode == EventExecutionMode::PersistentReplay);
+
+	if (!persistentReplay)
+		EventReplay::Record(e);
+
+	// add objects?
+	
+	// DEMOS events seem off by one? 
 	// e++;
 
 	gotele = false;
 
 	//printf("EVENT: %i\n", e);
 
-	for (auto o : objects)
+	if (!persistentReplay)
 	{
-		if (o.ev == e)
+		for (auto o : objects)
 		{
-			MapObject mo(o);
-
-			CalcVecs(mo);
-
-			// ordering seems needed for collison?
-			if (mo.t == ObjectGraphics::OLT_PLAYER1)
+			if (o.ev == e)
 			{
-				mapobjects.push_front(mo);
-			}
-			else if (mo.t != ObjectGraphics::OLT_PLAYER2)
-			{
-				// DO NOTHING FOR P2: Invisible P2 object causes enemies to be hurt!
-				mapobjects.push_back(mo);
+				MapObject mo(o);
+
+				CalcVecs(mo);
+
+				// ordering seems needed for collision?
+				if (mo.t == ObjectGraphics::OLT_PLAYER1)
+				{
+					mapobjects.push_front(mo);
+				}
+				else if (mo.t != ObjectGraphics::OLT_PLAYER2)
+				{
+					// DO NOTHING FOR P2: Invisible P2 object causes enemies to be hurt!
+					mapobjects.push_back(mo);
+				}
 			}
 		}
 	}
 
-	// doors.
+	// doors
 	bool diddoor = false;
 
 	for (auto d : doors)
 	{
-		if (d.eventnum == e)
+		if (d.eventnum != e)
+			continue;
+
+		Zone& zone = zones[d.zone];
+
+		if (persistentReplay)
 		{
-			//zones[d.zone].x1 = zones[d.zone].x2 = -1;
-			//zones[d.zone].z1 = zones[d.zone].z2 = -1;
+			// A recorded door event represents a durable opened door.  Restoring
+			// the final geometry avoids replay sounds and avoids making the player
+			// wait for every previously opened door to animate again.
+			zone.open = 0x8000;
+			zone.x1 = -1;
+			zone.x2 = -1;
+			zone.z1 = -1;
+			zone.z2 = -1;
+		}
+		else
+		{
 			ActiveDoor ad;
-
-			/*
-			NOTE MOVE LONGS: This should copy Z's as well?
-
-			move.l	a1, do_poly(a0)
-			move.l	zo_lx(a1), do_lx(a0)
-			move.l	zo_rx(a1), do_rx(a0)
-			clr	do_frac(a0)
-			move	#$100, do_fracadd(a0)
-			*/
 			ad.do_poly = d.zone;
-			ad.do_lx = zones[d.zone].x1;
-			ad.do_rx = zones[d.zone].x2;
-			ad.do_lz = zones[d.zone].z1;
-			ad.do_rz = zones[d.zone].z2;
+			ad.do_lx = zone.x1;
+			ad.do_rx = zone.x2;
+			ad.do_lz = zone.z1;
+			ad.do_rz = zone.z2;
 			ad.do_frac = 0;
 			ad.do_fracadd = 0x100;
 
@@ -757,8 +781,7 @@ void GloomMap::ExecuteEvent(uint32_t e, bool& gotele, Teleport& teleout, bool al
 				dbf	d1,.loop2
 				*/
 				int32_t cx, cz;
-				cx = 0;
-				cz = 0;
+				cx = 0; cz = 0;
 				for (int16_t p = 0; p < r.count; p++)
 				{
 					cx += zones[ar.first + p].x1;
@@ -783,7 +806,7 @@ void GloomMap::ExecuteEvent(uint32_t e, bool& gotele, Teleport& teleout, bool al
 		}
 	}
 
-	if (diddoor)
+	if (diddoor && !persistentReplay)
 		SoundHandler::Play(SoundHandler::SOUND_DOOR);
 
 	// teleports
@@ -791,16 +814,18 @@ void GloomMap::ExecuteEvent(uint32_t e, bool& gotele, Teleport& teleout, bool al
 	// the event script, but teleport commands are ignored while finished2 is set,
 	// otherwise the slow blue beam-out would be replaced by the normal fast
 	// teleport animation.  allowTeleport lets GameLogic mirror that behaviour.
-	if (!allowTeleport)
-	{
+	if (!allowTeleport || persistentReplay)
 		return;
-	}
 
 	for (auto t : teles)
 	{
 		if (t.ev == e)
 		{
-			SoundHandler::Play(SoundHandler::SOUND_TELEPORT);
+			// A non-zero Y is the original game's special Defender monitor lock,
+			// not a spatial teleport.  It must not play the teleport sound or run
+			// the blue pixelation transition.
+			if (!t.IsMonitorLock())
+				SoundHandler::Play(SoundHandler::SOUND_TELEPORT);
 			gotele = true;
 			teleout = t;
 		}
@@ -838,7 +863,7 @@ MapObject::MapObject(Object m)
 	data.ms.firecnt = m.firecnt;
 	data.ms.firerate = m.firerate;
 
-	data.ms.reload = (t == ObjectGraphics::OLT_PLAYER1) ? 5 : 0;
+	data.ms.reload = (t == ObjectGraphics::OLT_PLAYER1)? 5 : 0;
 	data.ms.reloadcnt = 0;
 
 	data.ms.bounce = 0;
@@ -867,105 +892,105 @@ MapObject::MapObject(Object m)
 
 	switch (t)
 	{
-	case ObjectGraphics::OLT_PLAYER1:
-		data.ms.logic = NullLogic;
-		data.ms.hit = NullLogicComp;
-		data.ms.die = PlayerDie;
-		data.ms.eyey = -110;
-		break;
-	case ObjectGraphics::OLT_PLAYER2:
-		data.ms.logic = NullLogic;
-		data.ms.hit = NullLogicComp;
-		data.ms.die = NullLogicComp;
-		data.ms.eyey = -110;
-		break;
-	case ObjectGraphics::OLT_MARINE:
-		data.ms.logic = MonsterLogic;
-		data.ms.hit = HurtNGrunt;
-		data.ms.die = BlowObject;
-		break;
-	case ObjectGraphics::OLT_BALDY:
-		data.ms.logic = BaldyLogic;
-		data.ms.hit = HurtNGrunt;
-		data.ms.die = BlowObject;
-		break;
-	case ObjectGraphics::OLT_PHANTOM:
-		data.ms.logic = PhantomLogic;
-		data.ms.hit = HurtNGrunt;
-		data.ms.die = BlowObject;
-		break;
-	case ObjectGraphics::OLT_DEMON:
-		data.ms.logic = DemonLogic;
-		data.ms.hit = HurtNGrunt;
-		data.ms.die = BlowObject;
-		break;
-	case ObjectGraphics::OLT_TERRA:
-		data.ms.logic = TerraLogic;
-		data.ms.hit = HurtTerra;
-		data.ms.die = BlowTerra;
-		break;
-	case ObjectGraphics::OLT_GHOUL:
-		data.ms.logic = GhoulLogic;
-		data.ms.hit = NullLogicComp;
-		data.ms.die = BlowObjectNoChunks;
-		break;
-	case ObjectGraphics::OLT_LIZARD:
-		data.ms.logic = LizardLogic;
-		data.ms.hit = LizHurt;
-		data.ms.die = BlowObject;
-		break;
-	case ObjectGraphics::OLT_TROLL:
-		data.ms.logic = TrollLogic;
-		data.ms.hit = TrollHurt;
-		data.ms.die = BlowObject;
-		break;
-	case ObjectGraphics::OLT_DEATHHEAD:
-		data.ms.logic = DeathLogic;
-		data.ms.hit = HurtDeath;
-		data.ms.die = BlowDeath;
-		break;
-	case ObjectGraphics::OLT_DRAGON:
-		data.ms.logic = DragonLogic;
-		data.ms.hit = NullLogicComp;
-		data.ms.die = BlowDragon;
-		break;
-	case ObjectGraphics::OLT_WEAPON1:
-	case ObjectGraphics::OLT_WEAPON2:
-	case ObjectGraphics::OLT_WEAPON3:
-	case ObjectGraphics::OLT_WEAPON4:
-	case ObjectGraphics::OLT_WEAPON5:
-		data.ms.logic = WeaponLogic;
-		data.ms.hit = WeaponGot;
-		data.ms.die = WeaponGot;
-		break;
-	case ObjectGraphics::OLT_HEALTH:
-		data.ms.logic = NullLogic;
-		data.ms.hit = HealthGot;
-		data.ms.die = HealthGot;
-		break;
-	case ObjectGraphics::OLT_INVISI:
-		data.ms.logic = NullLogic;
-		data.ms.hit = InvisGot;
-		data.ms.die = InvisGot;
-		break;
-	case ObjectGraphics::OLT_THERMO:
-		data.ms.logic = NullLogic;
-		data.ms.hit = ThermoGot;
-		data.ms.die = ThermoGot;
-		break;
-	case ObjectGraphics::OLT_BOUNCY:
-		data.ms.logic = BouncyLogic;
-		data.ms.hit = BouncyGot;
-		data.ms.die = BouncyGot;
-		break;
-	default:
-		data.ms.logic = NullLogic;
-		data.ms.hit = NullLogicComp;
-		data.ms.die = KillLogicComp;
+		case ObjectGraphics::OLT_PLAYER1:
+			data.ms.logic = NullLogic;
+			data.ms.hit = NullLogicComp;
+			data.ms.die = PlayerDie;
+			data.ms.eyey = -110;
+			break;
+		case ObjectGraphics::OLT_PLAYER2:
+			data.ms.logic = NullLogic;
+			data.ms.hit = NullLogicComp;
+			data.ms.die = NullLogicComp;
+			data.ms.eyey = -110;
+			break;
+		case ObjectGraphics::OLT_MARINE:
+			data.ms.logic = MonsterLogic;
+			data.ms.hit = HurtNGrunt;
+			data.ms.die = BlowObject;
+			break;
+		case ObjectGraphics::OLT_BALDY:
+			data.ms.logic = BaldyLogic;
+			data.ms.hit = HurtNGrunt;
+			data.ms.die = BlowObject;
+			break;
+		case ObjectGraphics::OLT_PHANTOM:
+			data.ms.logic = PhantomLogic;
+			data.ms.hit = HurtNGrunt;
+			data.ms.die = BlowObject;
+			break;
+		case ObjectGraphics::OLT_DEMON:
+			data.ms.logic = DemonLogic;
+			data.ms.hit = HurtNGrunt;
+			data.ms.die = BlowObject;
+			break;
+		case ObjectGraphics::OLT_TERRA:
+			data.ms.logic = TerraLogic;
+			data.ms.hit = HurtTerra;
+			data.ms.die = BlowTerra;
+			break;
+		case ObjectGraphics::OLT_GHOUL:
+			data.ms.logic = GhoulLogic;
+			data.ms.hit = NullLogicComp;
+			data.ms.die = BlowObjectNoChunks;
+			break;
+		case ObjectGraphics::OLT_LIZARD:
+			data.ms.logic = LizardLogic;
+			data.ms.hit = LizHurt;
+			data.ms.die = BlowObject;
+			break;
+		case ObjectGraphics::OLT_TROLL:
+			data.ms.logic = TrollLogic;
+			data.ms.hit = TrollHurt;
+			data.ms.die = BlowObject;
+			break;
+		case ObjectGraphics::OLT_DEATHHEAD:
+			data.ms.logic = DeathLogic;
+			data.ms.hit = HurtDeath;
+			data.ms.die = BlowDeath;
+			break;
+		case ObjectGraphics::OLT_DRAGON:
+			data.ms.logic = DragonLogic;
+			data.ms.hit = NullLogicComp;
+			data.ms.die = BlowDragon;
+			break;
+		case ObjectGraphics::OLT_WEAPON1:
+		case ObjectGraphics::OLT_WEAPON2:
+		case ObjectGraphics::OLT_WEAPON3:
+		case ObjectGraphics::OLT_WEAPON4:
+		case ObjectGraphics::OLT_WEAPON5:
+			data.ms.logic = WeaponLogic;
+			data.ms.hit = WeaponGot;
+			data.ms.die = WeaponGot;
+			break;
+		case ObjectGraphics::OLT_HEALTH:
+			data.ms.logic = NullLogic;
+			data.ms.hit = HealthGot;
+			data.ms.die = HealthGot;
+			break;
+		case ObjectGraphics::OLT_INVISI:
+			data.ms.logic = NullLogic;
+			data.ms.hit = InvisGot;
+			data.ms.die = InvisGot;
+			break;
+		case ObjectGraphics::OLT_THERMO:
+			data.ms.logic = NullLogic;
+			data.ms.hit = ThermoGot;
+			data.ms.die = ThermoGot;
+			break;
+		case ObjectGraphics::OLT_BOUNCY:
+			data.ms.logic = BouncyLogic;
+			data.ms.hit = BouncyGot;
+			data.ms.die = BouncyGot;
+			break;
+		default:
+			data.ms.logic = NullLogic;
+			data.ms.hit = NullLogicComp;
+			data.ms.die = KillLogicComp;
 	}
 
 	// avoid zero as I need to flag nothing
-	identifier = counter + 1;
+	identifier = counter+1;
 	counter++;
 }
 
@@ -979,6 +1004,7 @@ MapObject::MapObject()
 	data.ms.delay = 0;
 	data.ms.reload = 0;
 	data.ms.reloadcnt = 0;
+
 
 	data.ms.colltype = 0;
 	data.ms.collwith = 0;

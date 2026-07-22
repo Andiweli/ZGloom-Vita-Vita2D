@@ -50,6 +50,8 @@ namespace Config
 	static bool unlimitedlives; // cheatmode
 	static bool maxweapon; // cheatmode
 	static int bloodsize;
+	static int bloodmode = 1;
+	static int reflections = 0;
 	static bool debug = false;
 	static uint32_t FPS;
 	static bool multithread = true;
@@ -375,6 +377,8 @@ namespace Config
 
 		mousesens = 2;
 		bloodsize = 2;
+		bloodmode = 1;
+		reflections = 0;
 
 		multithread = true;
 		debug = false;
@@ -446,6 +450,16 @@ namespace Config
 					if (command == "bloodsize")
 					{
 						bloodsize = std::stoi(line);
+						bloodmode = bloodsize <= 0 ? 0 : 1;
+					}
+					if (command == "bloodmode")
+					{
+						bloodmode = std::max(0, std::min(2, std::stoi(line)));
+						bloodsize = bloodmode == 0 ? 0 : 2;
+					}
+					if (command == "reflections")
+					{
+						reflections = std::max(0, std::min(2, std::stoi(line)));
 					}
 					if (command == "sfxvol")
 					{
@@ -534,14 +548,45 @@ namespace Config
 		mousesens = sens;
 	}
 
+	int GetBloodMode()
+	{
+		return bloodmode;
+	}
+
+	void SetBloodMode(int mode)
+	{
+		bloodmode = std::max(0, std::min(2, mode));
+		bloodsize = bloodmode == 0 ? 0 : 2;
+	}
+
+	int GetBloodParticleSize()
+	{
+		return bloodmode == 0 ? 0 : 2;
+	}
+
+	bool BloodPoolsEnabled()
+	{
+		return bloodmode == 2;
+	}
+
 	int GetBlood()
 	{
-		return bloodsize;
+		return GetBloodParticleSize();
 	}
 
 	void SetBlood(int b)
 	{
-		bloodsize = b;
+		SetBloodMode(b <= 0 ? 0 : 1);
+	}
+
+	int GetReflections()
+	{
+		return reflections;
+	}
+
+	void SetReflections(int mode)
+	{
+		reflections = std::max(0, std::min(2, mode));
 	}
 
 	int GetDustEnabled()
@@ -759,8 +804,10 @@ namespace Config
         file << "\n;Mouse sensitivity\n";
         file << "mousesensitivity " << mousesens << "\n";
 
-        file << "\n;Size of blood splatters in pixels\n";
-        file << "bloodsize " << bloodsize << "\n";
+        file << "\n;Blood mode: 0=off, 1=splatter, 2=massacre\n";
+        file << "bloodmode " << bloodmode << "\n";
+        file << "bloodsize " << GetBloodParticleSize() << "\n";
+        file << "reflections " << reflections << "\n";
 
         file << "\n;Audio volumes\n";
         file << "sfxvol " << sfxvol << "\n";
@@ -805,6 +852,8 @@ namespace Config
         file << "DUSTSPEED="     << Config::GetDustSpeedScale()       << "\n";
         file << "DUSTPLAYERINFLUENCE=" << Config::GetDustPlayerInfluence() << "\n";
         file << "BILINEAR="      << Config::GetBilinearFilter()       << "\n";
+        file << "BLOODMODE="     << Config::GetBloodMode()            << "\n";
+        file << "REFLECTIONS="   << Config::GetReflections()          << "\n";
 
         file.close();
     }
@@ -917,9 +966,17 @@ namespace Config
 			{
 				SetMouseSens(parse_int(val));
 			}
+			else if (ieq(key, "BLOODMODE"))
+			{
+				SetBloodMode(parse_int(val));
+			}
 			else if (ieq(key, "BLOODSIZE"))
 			{
-				bloodsize = parse_int(val);
+				SetBlood(parse_int(val));
+			}
+			else if (ieq(key, "REFLECTIONS"))
+			{
+				SetReflections(parse_int(val));
 			}
 			else if (ieq(key, "SFX"))
 			{
@@ -1057,6 +1114,8 @@ namespace Config
     int fl = focallength;
     int sens = GetMouseSens();
     int bsz = bloodsize;
+    int bmode = bloodmode;
+    int refl = reflections;
     int sfx = sfxvol, mus = musvol;
     int mt = multithread ? 1 : 0;
     int mxfps = maxfps;
@@ -1108,8 +1167,10 @@ namespace Config
     std::fputs(";Mouse sensitivity\n", out);
     std::fprintf(out, "SENSITIVITY=%d\n\n", sens);
 
-    std::fputs(";Size of blood splatters in pixels\n", out);
-    std::fprintf(out, "BLOODSIZE=%d\n\n", bsz);
+    std::fputs(";Blood mode: 0=off, 1=splatter, 2=massacre\n", out);
+    std::fprintf(out, "BLOODMODE=%d\n", bmode);
+    std::fprintf(out, "BLOODSIZE=%d\n", bmode == 0 ? 0 : 2);
+    std::fprintf(out, "REFLECTIONS=%d\n\n", refl);
 
     std::fputs(";Audio volumes\n", out);
     std::fprintf(out, "SFX=%d\n", sfx);

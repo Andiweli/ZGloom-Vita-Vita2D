@@ -22,6 +22,7 @@ public:
 	MenuScreen();
 	void Render(SDL_Surface* src, SDL_Surface* dest, Font& font);
 	void Clock() { timer++; };
+	void ResetToMain() { status = MENUSTATUS_MAIN; selection = 0; timer = 0; }
 	MenuReturn Update();
 
 private:
@@ -32,7 +33,8 @@ private:
 		ACTION_BOOL,
 		ACTION_INT,
 		ACTION_RETURN,
-		ACTION_PROFILE
+		ACTION_PROFILE,
+		ACTION_LABEL
 	};
 
 	struct MenuEntry
@@ -67,6 +69,8 @@ private:
 	MENUSTATUS status;
 	int selection;
 	int timer;
+	MENUSTATUS parentStatus[6];
+	int parentSelection[6];
 
 	MenuReturn HandleMainMenu();
 	void HandleKeyMenu();

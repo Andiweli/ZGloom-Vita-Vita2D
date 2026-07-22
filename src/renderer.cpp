@@ -7,194 +7,9 @@
 #include "objectgraphics.h"
 #include "config.h"
 #include "vita/RendererHooks.h"
-#include "ConfigOverlays.h" // liefert Config::GetBlobShadows()/SetBlobShadows()
-#include "effects/MuzzleFlashFX.h"
-#include "hud.h"
-
-
-// ---- Simple blob shadow (ZGloom-Vita 3.0) -----------------------------------
-static inline uint32_t ZG_DarkenPixel(uint32_t c, uint8_t alpha/*0..255*/) {
-    // Darken towards black: alpha=96 ~ 0.38 darkening
-    uint32_t a = c & 0xFF000000u;
-    uint32_t r = (c >> 16) & 0xFFu;
-    uint32_t g = (c >>  8) & 0xFFu;
-    uint32_t b =  c        & 0xFFu;
-
-    r = (r * (255 - alpha)) >> 8;
-    g = (g * (255 - alpha)) >> 8;
-    b = (b * (255 - alpha)) >> 8;
-    return a | (r << 16) | (g << 8) | b;
-}
-
-static inline bool ZG_IsEnemyLogicType(int t)
-{
-    using OLT = ObjectGraphics::ObjectLogicType;
-    switch (t)
-    {
-        case OLT::OLT_MARINE:
-        case OLT::OLT_BALDY:
-        case OLT::OLT_TERRA:
-        case OLT::OLT_GHOUL:
-        case OLT::OLT_PHANTOM:
-        case OLT::OLT_DRAGON:
-        case OLT::OLT_LIZARD:
-        case OLT::OLT_DEATHHEAD:
-        case OLT::OLT_TROLL:
-        case OLT::OLT_DEMON:
-            return true;
-        default:
-            return false;
-    }
-}
-
-// Draw a flat ellipse under the feet with Z-occlusion against geometry.
-static inline void ZG_DrawBlobShadow(
-    uint32_t* surface, int renderwidth, int renderheight, const int32_t* zbuff,
-    int cx, int cy, int rx, int ry, int iz, bool thermoOn)
-{
-	if (!Config::GetBlobShadows()) return;  // Toggle OFF Ã¢ÂÂ kein Schatten zeichnen
-
-    if (thermoOn) return;                 // optional: disable with thermo-glasses
-    if (rx <= 0 || ry <= 0) return;
-
-    int y0 = cy - ry;
-    int y1 = cy;
-    if (y0 < 0) y0 = 0; if (y1 >= renderheight) y1 = renderheight - 1;
-
-    for (int y = y0; y <= y1; ++y)
-    {
-        float ny  = (float)(y - cy) / (float)ry;            // [-1..0]
-        float base = 1.0f - ny*ny; if (base < 0.0f) base = 0.0f;
-        float spanf = (float)rx * sqrtf(base);
-        int xl = cx - (int)spanf;
-        int xr = cx + (int)spanf;
-
-        if (xl < 0) xl = 0;
-        if (xr >= renderwidth) xr = renderwidth - 1;
-        if (xl > xr) continue;
-
-        for (int x = xl; x <= xr; ++x)
-        {
-            if (iz > zbuff[x]) continue;  // occluded by nearer geometry in this column
-            uint32_t idx = (uint32_t)(x + y * renderwidth);
-            surface[idx] = ZG_DarkenPixel(surface[idx], 96); // 96 Ã¢ÂÂ 38% darken
-        }
-    }
-}
-
-
-// ZGloom-Vita: projectile ground glow under flying bullets (tied to MUZZLE FLASH).
-static inline void ZG_DrawProjectileGlow(
-    uint32_t* surface,
-    int renderwidth,
-    int renderheight,
-    const int32_t* zbuff,
-    const int32_t* floorstart,
-    int cx,
-    int spriteWidth,
-    int iz,
-    float tintR,
-    float tintG,
-    float tintB,
-    int cameraY,
-    int focmult,
-    int halfrenderheight)
-{
-    if (Config::GetMuzzleFlash() == 0) return;
-    if (!surface || !zbuff || !floorstart) return;
-    if (cx < 0 || cx >= renderwidth) return;
-    if (iz <= 0) return;
-
-    // Bodenzeile direkt aus Floor-Projektion bestimmen (wie DrawFloor):
-    // y = halfrenderheight + cameraY * focmult / z
-    int fyCenter = halfrenderheight + (cameraY * focmult) / iz;
-    if (fyCenter < 0) fyCenter = 0;
-    if (fyCenter >= renderheight) fyCenter = renderheight - 1;
-
-    // Distanz-Falloff: nah breit & hell, fern schmal & dunkel
-    const int zNear = 128;
-    const int zFar  = 4096;
-    int z = iz;
-    if (z < zNear) z = zNear;
-    if (z > zFar)  z = zFar;
-
-    float distF = 1.0f - (float)(z - zNear) / (float)(zFar - zNear);
-    if (distF < 0.0f) distF = 0.0f;
-    if (distF > 1.0f) distF = 1.0f;
-    if (distF <= 0.01f) return;
-
-    // Basisbreite: ca. 1.5ÃÂ Geschossbreite, skaliert mit Distanz
-    int baseRx = (spriteWidth * 3) / 4; // Radius -> ~1.5x Gesamtbreite
-    if (baseRx < 1) baseRx = 1;
-    int rx = (int)((float)baseRx * (0.5f + 0.5f * distF));
-    if (rx < 1) rx = 1;
-
-    // Vertikale Ausdehnung fÃÂ¼r mehr Tiefe: ellipsenfÃÂ¶rmig in Bildschirmkoordinaten
-    int baseRy = spriteWidth / 3;
-    if (baseRy < 2) baseRy = 2;
-    if (baseRy > 12) baseRy = 12;
-    int ry = (int)((float)baseRy * (0.5f + 0.5f * distF));
-    if (ry < 2) ry = 2;
-
-    // Tint in 0..255 vorbereiten
-    int tr = (int)(255.0f * tintR); if (tr < 0) tr = 0; if (tr > 255) tr = 255;
-    int tg = (int)(255.0f * tintG); if (tg < 0) tg = 0; if (tg > 255) tg = 255;
-    int tb = (int)(255.0f * tintB); if (tb < 0) tb = 0; if (tb > 255) tb = 255;
-
-    for (int dx = -rx; dx <= rx; ++dx)
-    {
-        int sx = cx + dx;
-        if (sx < 0 || sx >= renderwidth) continue;
-
-        // Nie hinter nÃÂ¤herer Geometrie zeichnen
-        if (iz > zbuff[sx]) continue;
-
-        // Clip nach oben: nie ÃÂ¼ber die erste sichtbare Bodenzeile zeichnen
-        int floorClip = floorstart[sx];
-        if (floorClip < 0) floorClip = 0;
-        if (floorClip >= renderheight) continue;
-
-        for (int dy = -ry; dy <= ry; ++dy)
-        {
-            int sy = fyCenter + dy;
-            if (sy < floorClip) continue;           // nicht ÃÂ¼ber die Bodenkante
-            if (sy >= renderheight) break;         // weiter unten ist nur noch Offscreen
-
-            // 2D-Ellipse in Bildschirmkoordinaten (nx, ny in [-1, 1])
-            float nx = (float)dx / (float)rx;
-            float ny = (float)dy / (float)ry;
-            float radial = 1.0f - (nx * nx + ny * ny);
-            if (radial <= 0.0f) continue;
-
-            float colStrength = distF * radial;
-            if (colStrength <= 0.01f) continue;
-
-            uint32_t* p = &surface[sx + sy * renderwidth];
-            uint32_t c  = *p;
-
-            int br = (c >> 16) & 0xFF;
-            int bg = (c >> 8)  & 0xFF;
-            int bb = (c      ) & 0xFF;
-
-            float alpha = 0.35f * colStrength;
-            if (alpha <= 0.0f) continue;
-            if (alpha > 1.0f) alpha = 1.0f;
-
-            float nr = (float)br * (1.0f - alpha) + (float)tr * alpha;
-            float ng = (float)bg * (1.0f - alpha) + (float)tg * alpha;
-            float nb = (float)bb * (1.0f - alpha) + (float)tb * alpha;
-
-            if (nr > 255.0f) nr = 255.0f;
-            if (ng > 255.0f) ng = 255.0f;
-            if (nb > 255.0f) nb = 255.0f;
-
-            *p = (c & 0xFF000000u) |
-                 (((uint32_t)nr) << 16) |
-                 (((uint32_t)ng) << 8)  |
-                 (((uint32_t)nb));
-        }
-    }
-}
+#include "ConfigOverlays.h"
+// Forward decl from hud.cpp
+void Hud_GetWeaponTint(int wepIndex, float& r, float& g, float& b);
 
 // ---- Fast Smooth-Lighting LUT (8-bit fixed point) ---------------------------
 #include <math.h>
@@ -264,6 +79,208 @@ static inline void ColourModifySmoothFade(uint8_t r, uint8_t g, uint8_t b, uint3
     }
 
     out = 0xFF000000u | (R<<16) | (G<<8) | B;
+}
+
+
+
+// ---- Simple blob shadow helpers (ZGloom-Vita style, enemies only) ----------
+static inline uint32_t ZG_DarkenPixel(uint32_t c, uint8_t alpha/*0..255*/) {
+    // Darken towards black: alpha ~ 120 ~ ca. 47% Darkening
+    uint32_t a = c & 0xFF000000u;
+    uint32_t r = (c >> 16) & 0xFFu;
+    uint32_t g = (c >>  8) & 0xFFu;
+    uint32_t b =  c        & 0xFFu;
+
+    r = (r * (255 - alpha)) >> 8;
+    g = (g * (255 - alpha)) >> 8;
+    b = (b * (255 - alpha)) >> 8;
+    return a | (r << 16) | (g << 8) | b;
+}
+// ZGloom-PC: Vita-style projectile ground glow under flying bullets (tied to MUZZLE FLASH).
+static inline void ZG_DrawProjectileGlow(
+    uint32_t* surface,
+    int renderwidth,
+    int renderheight,
+    const int32_t* zbuff,
+    const int32_t* floorstart,
+    int cx,
+    int spriteWidth,
+    int iz,
+    float tintR,
+    float tintG,
+    float tintB,
+    int cameraY,
+    int focmult,
+    int halfrenderheight)
+{
+    if (Config::GetReflections() < 1) return;
+    if (!surface || !zbuff || !floorstart) return;
+    if (cx < 0 || cx >= renderwidth) return;
+    if (iz <= 0) return;
+
+    int fyCenter = halfrenderheight + (cameraY * focmult) / iz;
+    if (fyCenter < 0) fyCenter = 0;
+    if (fyCenter >= renderheight) fyCenter = renderheight - 1;
+
+    const int zNear = 128;
+    const int zFar  = 4096;
+    int z = iz; if (z < zNear) z = zNear; if (z > zFar) z = zFar;
+    float distF = 1.0f - (float)(z - zNear) / (float)(zFar - zNear);
+    if (distF <= 0.01f) return;
+    if (distF < 0.0f) distF = 0.0f; if (distF > 1.0f) distF = 1.0f;
+
+    int baseRx = (spriteWidth * 3) / 4; if (baseRx < 1) baseRx = 1;
+    int rx = (int)((float)baseRx * (0.5f + 0.5f * distF)); if (rx < 1) rx = 1;
+
+    int baseRy = spriteWidth / 3; if (baseRy < 1) baseRy = 1;
+    int ry = (int)((float)baseRy * (0.5f + 0.5f * distF)); if (ry < 1) ry = 1;
+
+    for (int dx = -rx; dx <= rx; ++dx) {
+        int sx = cx + dx;
+        if (sx < 0 || sx >= renderwidth) continue;
+        if (iz > zbuff[sx]) continue;
+
+        int floorClip = floorstart[sx];
+        if (floorClip < 0) floorClip = 0;
+        if (floorClip >= renderheight) continue;
+
+        for (int dy = -ry; dy <= ry; ++dy) {
+            int sy = fyCenter + dy;
+            if (sy < floorClip) continue;
+            if (sy >= renderheight) break;
+
+            float nx = (float)dx / (float)rx;
+            float ny = (float)dy / (float)ry;
+            float radial = 1.0f - (nx*nx + ny*ny);
+            if (radial <= 0.0f) continue;
+
+            float colStrength = distF * radial;
+            if (colStrength <= 0.01f) continue;
+
+            uint32_t* p = &surface[sx + sy * renderwidth];
+            uint32_t c  = *p;
+            int br = (c >> 16) & 0xFF;
+            int bg = (c >>  8) & 0xFF;
+            int bb = (c      ) & 0xFF;
+
+            const float kGlowIntensity = 0.166667f; // ~1/6 of full brightness
+            int addR = (int)(tintR * 255.0f * colStrength * kGlowIntensity);
+            int addG = (int)(tintG * 255.0f * colStrength * kGlowIntensity);
+            int addB = (int)(tintB * 255.0f * colStrength * kGlowIntensity);
+            br += addR; if (br > 255) br = 255;
+            bg += addG; if (bg > 255) bg = 255;
+            bb += addB; if (bb > 255) bb = 255;
+            *p = 0xFF000000u | (br << 16) | (bg << 8) | bb;
+        }
+    }
+}
+
+
+static inline bool ZG_IsEnemyLogicType(int t)
+{
+    using OLT = ObjectGraphics::ObjectLogicType;
+    switch (t)
+    {
+        case OLT::OLT_MARINE:
+        case OLT::OLT_BALDY:
+        case OLT::OLT_TERRA:
+        case OLT::OLT_GHOUL:
+        case OLT::OLT_PHANTOM:
+        case OLT::OLT_DRAGON:
+        case OLT::OLT_LIZARD:
+        case OLT::OLT_DEATHHEAD:
+        case OLT::OLT_TROLL:
+        case OLT::OLT_DEMON:
+            return true;
+        default:
+            return false;
+    }
+}
+
+static inline bool ZG_IsPickupLogicType(int t)
+{
+    using OLT = ObjectGraphics::ObjectLogicType;
+    switch (t)
+    {
+        case OLT::OLT_HEALTH:
+        case OLT::OLT_WEAPON:
+        case OLT::OLT_THERMO:
+        case OLT::OLT_INFRA:
+        case OLT::OLT_INVISI:
+        case OLT::OLT_INVINC:
+        case OLT::OLT_BOUNCY:
+            return true;
+        default:
+            return false;
+    }
+}
+
+static inline uint32_t ZG_BlendReflectionPixel(
+    uint32_t dst, uint32_t src, uint8_t alpha, uint8_t brightness)
+{
+    if (alpha == 0) return dst;
+
+    uint32_t sr = ((src >> 16) & 0xFFu) * brightness / 255u;
+    uint32_t sg = ((src >>  8) & 0xFFu) * brightness / 255u;
+    uint32_t sb = ( src        & 0xFFu) * brightness / 255u;
+    uint32_t dr = (dst >> 16) & 0xFFu;
+    uint32_t dg = (dst >>  8) & 0xFFu;
+    uint32_t db =  dst        & 0xFFu;
+    uint32_t inv = 255u - alpha;
+
+    uint32_t r = (sr * alpha + dr * inv) / 255u;
+    uint32_t g = (sg * alpha + dg * inv) / 255u;
+    uint32_t b = (sb * alpha + db * inv) / 255u;
+    return 0xFF000000u | (r << 16) | (g << 8) | b;
+}
+
+static inline uint32_t ZG_AlphaBlendPixel(uint32_t dst, uint32_t src, uint8_t alpha)
+{
+    const uint32_t inv = 255u - alpha;
+    const uint32_t dr = (dst >> 16) & 0xFFu;
+    const uint32_t dg = (dst >> 8) & 0xFFu;
+    const uint32_t db = dst & 0xFFu;
+    const uint32_t sr = (src >> 16) & 0xFFu;
+    const uint32_t sg = (src >> 8) & 0xFFu;
+    const uint32_t sb = src & 0xFFu;
+    const uint32_t r = (dr * inv + sr * alpha + 127u) / 255u;
+    const uint32_t g = (dg * inv + sg * alpha + 127u) / 255u;
+    const uint32_t b = (db * inv + sb * alpha + 127u) / 255u;
+    return 0xFF000000u | (r << 16) | (g << 8) | b;
+}
+
+// Draw a flat ellipse under the feet with Z-occlusion against geometry.
+static inline void ZG_DrawBlobShadow(
+    uint32_t* surface, int renderwidth, int renderheight, const int32_t* zbuff,
+    int cx, int cy, int rx, int ry, int iz)
+{
+    if (!(Config::GetBlobShadows() != 0)) return;  // Toggle OFF -> kein Schatten
+    if (rx <= 0 || ry <= 0) return;
+
+    int y0 = cy - ry;
+    int y1 = cy;
+    if (y0 < 0) y0 = 0;
+    if (y1 >= renderheight) y1 = renderheight - 1;
+
+    for (int y = y0; y <= y1; ++y)
+    {
+        float ny  = (float)(y - cy) / (float)ry;            // [-1..0]
+        float base = 1.0f - ny*ny; if (base < 0.0f) base = 0.0f;
+        float spanf = (float)rx * sqrtf(base);
+        int xl = cx - (int)spanf;
+        int xr = cx + (int)spanf;
+
+        if (xl < 0) xl = 0;
+        if (xr >= renderwidth) xr = renderwidth - 1;
+        if (xl > xr) continue;
+
+        for (int x = xl; x <= xr; ++x)
+        {
+            if (iz > zbuff[x]) continue;  // von Geometrie verdeckt
+            uint32_t idx = (uint32_t)(x + y * renderwidth);
+            surface[idx] = ZG_DarkenPixel(surface[idx], 120);
+        }
+    }
 }
 
 
@@ -490,6 +507,7 @@ void Renderer::Init(SDL_Surface* nrendersurface, GloomMap* ngloommap, ObjectGrap
 	zbuff.resize(renderwidth);
 	ceilend.resize(renderwidth);
 	floorstart.resize(renderwidth);
+	reflectioncover.resize(renderwidth);
 
 	walls.resize(gloommap->GetZones().size());
 
@@ -501,11 +519,23 @@ void Renderer::Init(SDL_Surface* nrendersurface, GloomMap* ngloommap, ObjectGrap
 	dusttuning.enablePlayerInfluence = (Config::GetDustPlayerInfluence() != 0);
 	dustsystem.SetTuning(dusttuning);
 	dustsystem.BuildFromMap(gloommap);
+	SDL_Log("[dust] init zones=%d particles=%d", dustsystem.GetZoneCount(), dustsystem.GetParticleCount());
 	dustrendercache.clear();
 	dustcamvalid = false;
 	dustlastticks = 0;
 
 	focmult = Config::GetFocalLength();
+
+	for (auto x = 0; x < renderwidth; x++)
+	{
+		Quick f;
+		Quick g;
+
+		f.SetVal(focmult);
+		g.SetVal(x - halfrenderwidth);
+
+		castgrads[x] = g / f;
+	}
 
 	for (auto x = 0; x < renderwidth; x++)
 	{
@@ -773,6 +803,7 @@ bool zcompare(const MapObject& first, const MapObject& second)
 	return first.rotz > second.rotz;
 }
 
+
 void Renderer::ApplyTeleportPixelate()
 {
 	const int ft = ZG_ClampTeleFade(fadetimer);
@@ -820,8 +851,311 @@ void Renderer::ApplyTeleportPixelate()
 	}
 }
 
+static float ZG_BloodDecalLifeAlpha(uint32_t now, uint32_t bornAtMs,
+                                      uint32_t lifetimeMs)
+{
+    if (bornAtMs == 0 || lifetimeMs == 0)
+        return 1.0f;
+
+    const uint32_t elapsed = now - bornAtMs;
+    if (elapsed >= lifetimeMs)
+        return 0.0f;
+
+    // Keep the stain fully visible, then fade smoothly during its final second.
+    const uint32_t fadeMs = std::min<uint32_t>(1000u, lifetimeMs);
+    const uint32_t fadeStart = lifetimeMs - fadeMs;
+    if (elapsed <= fadeStart)
+        return 1.0f;
+
+    return static_cast<float>(lifetimeMs - elapsed) /
+        static_cast<float>(fadeMs);
+}
+
+void Renderer::DrawBloodPools(Camera* camera)
+{
+	if (!Config::BloodPoolsEnabled() || gloommap->GetBloodPools().empty())
+		return;
+
+	// A pool is assembled from several deterministic world-space lobes instead
+	// of one fixed screen-space ellipse.  The seed is created once when the pool
+	// is spawned, so the outline stays perfectly stable while the camera moves.
+	// No frame-to-frame RNG is used and no shape data needs to be allocated.
+	static const int kDirX[16] = {
+		256, 237, 181,  98,   0, -98, -181, -237,
+		-256, -237, -181, -98,   0,  98,  181,  237
+	};
+	static const int kDirZ[16] = {
+		0,  98, 181, 237, 256, 237,  181,   98,
+		0, -98,-181,-237,-256,-237, -181,  -98
+	};
+
+	auto Hash32 = [](uint32_t value) -> uint32_t
+	{
+		value ^= value >> 16;
+		value *= 0x7FEB352Du;
+		value ^= value >> 15;
+		value *= 0x846CA68Bu;
+		value ^= value >> 16;
+		return value;
+	};
+
+	Quick cammatrix[4];
+	GloomMaths::GetCamRot(camera->rotquick.GetInt() & 0xFF, cammatrix);
+	uint32_t* surface = static_cast<uint32_t*>(rendersurface->pixels);
+	const uint32_t now = SDL_GetTicks();
+
+	for (auto& pool : gloommap->GetBloodPools())
+	{
+		const float lifeAlpha = ZG_BloodDecalLifeAlpha(
+			now, pool.bornAtMs, pool.lifetimeMs);
+		if (lifeAlpha <= 0.0f)
+			continue;
+		Quick centreX = pool.x - camera->x;
+		Quick centreZ = pool.z - camera->z;
+		Quick temp = centreX;
+		centreX = (centreX * cammatrix[0]) + (centreZ * cammatrix[1]);
+		centreZ = (temp * cammatrix[2]) + (centreZ * cammatrix[3]);
+
+		const int centreDepth = centreZ.GetInt();
+		if (centreDepth <= 24 || centreDepth >= 8192)
+			continue;
+
+		const int centreScreenX = halfrenderwidth +
+			(centreX.GetInt() * focmult) / centreDepth;
+		if (centreScreenX < -192 || centreScreenX >= renderwidth + 192)
+			continue;
+
+		const int pal = GetDimPalette(centreDepth);
+		uint32_t bloodColour = 0;
+		const uint8_t r = static_cast<uint8_t>(((pool.color & 0xF00u) >> 8) * 17u);
+		const uint8_t g = static_cast<uint8_t>(((pool.color & 0x0F0u) >> 4) * 17u);
+		const uint8_t b = static_cast<uint8_t>((pool.color & 0x00Fu) * 17u);
+		if (fadetimer)
+			ColourModifyFade(r, g, b, bloodColour, pal);
+		else
+			ColourModify(r, g, b, bloodColour, pal);
+
+		float distance = 1.0f - static_cast<float>(centreDepth - 128) /
+			static_cast<float>(6144 - 128);
+		if (distance < 0.0f) distance = 0.0f;
+		if (distance > 1.0f) distance = 1.0f;
+		const float baseAlpha = (70.0f + 88.0f * distance) * lifeAlpha;
+
+		uint32_t seed = 0x9E3779B9u ^ static_cast<uint32_t>(pool.seed);
+		seed ^= static_cast<uint32_t>(pool.source);
+		seed ^= static_cast<uint32_t>(pool.source >> 32);
+		seed ^= static_cast<uint32_t>(pool.owner * 33u);
+		seed = Hash32(seed);
+		const int style = static_cast<int>(seed & 3u);
+		const int baseDirection = static_cast<int>((seed >> 4) & 15u);
+
+		auto DrawLobe = [&](int offsetX, int offsetZ, int radiusPercent,
+			int verticalPercent, int startDelay, int duration,
+			int alphaPercent)
+		{
+			int localAge = static_cast<int>(pool.age) - startDelay;
+			if (localAge < 0)
+				return;
+			if (duration < 1)
+				duration = 1;
+
+			float grow = static_cast<float>(localAge) /
+				static_cast<float>(duration);
+			if (grow < 0.0f) grow = 0.0f;
+			if (grow > 1.0f) grow = 1.0f;
+			grow = grow * grow * (3.0f - 2.0f * grow);
+			const float initial = startDelay == 0 ? 0.22f : 0.08f;
+			grow = initial + (1.0f - initial) * grow;
+
+			int worldRadius = (static_cast<int>(pool.targetRadius) *
+				radiusPercent + 50) / 100;
+			if (worldRadius < 3) worldRadius = 3;
+
+			Quick worldX = pool.x;
+			Quick worldZ = pool.z;
+			Quick offset;
+			offset.SetInt(offsetX);
+			worldX = worldX + offset;
+			offset.SetInt(offsetZ);
+			worldZ = worldZ + offset;
+
+			Quick viewX = worldX - camera->x;
+			Quick viewZ = worldZ - camera->z;
+			Quick rotateTemp = viewX;
+			viewX = (viewX * cammatrix[0]) + (viewZ * cammatrix[1]);
+			viewZ = (rotateTemp * cammatrix[2]) + (viewZ * cammatrix[3]);
+
+			const int iz = viewZ.GetInt();
+			if (iz <= 24 || iz >= 8192)
+				return;
+
+			const int cx = halfrenderwidth + (viewX.GetInt() * focmult) / iz;
+			const int groundY = halfrenderheight + (camera->y * focmult) / iz;
+			if (cx < -96 || cx >= renderwidth + 96 ||
+				groundY < -32 || groundY >= renderheight + 32)
+				return;
+
+			int rx = static_cast<int>((worldRadius * grow * focmult) / iz);
+			if (rx < 1) rx = 1;
+			if (rx > 82) rx = 82;
+			int ry = (rx * verticalPercent + 50) / 100;
+			if (ry < 1) ry = 1;
+			if (ry > 25) ry = 25;
+
+			const int rx2 = rx * rx;
+			const int ry2 = ry * ry;
+			const int64_t limit = static_cast<int64_t>(rx2) * ry2;
+
+			for (int sy = groundY - ry; sy <= groundY + ry; ++sy)
+			{
+				if (sy < 0 || sy >= renderheight)
+					continue;
+				const int dy = sy - groundY;
+
+				for (int sx = cx - rx; sx <= cx + rx; ++sx)
+				{
+					if (sx < 0 || sx >= renderwidth)
+						continue;
+					if (iz > zbuff[sx] || iz > reflectioncover[sx])
+						continue;
+					if (sy < floorstart[sx])
+						continue;
+
+					const int dx = sx - cx;
+					const int64_t metric = static_cast<int64_t>(dx * dx) * ry2 +
+						static_cast<int64_t>(dy * dy) * rx2;
+					if (metric > limit)
+						continue;
+
+					float radial = 1.0f - static_cast<float>(metric) /
+						static_cast<float>(limit);
+					if (radial < 0.0f) radial = 0.0f;
+					// Dense centre with a softer edge.  Overlapping lobes naturally
+					// create darker pooled areas without a separate texture buffer.
+					radial = 0.30f + 0.70f * radial;
+					int alpha = static_cast<int>(baseAlpha * radial *
+						static_cast<float>(alphaPercent) / 100.0f + 0.5f);
+					if (alpha < 1)
+						continue;
+					if (alpha > 190) alpha = 190;
+
+					uint32_t& dst = surface[sx + sy * renderwidth];
+					dst = ZG_AlphaBlendPixel(dst, bloodColour,
+						static_cast<uint8_t>(alpha));
+				}
+			}
+		};
+
+		// The core varies in size and flatness.  Some styles shift it slightly
+		// off-centre so the death position is not always the geometric centre.
+		const uint32_t coreHash = Hash32(seed ^ 0xA511E9B3u);
+		int coreOffsetX = 0;
+		int coreOffsetZ = 0;
+		if (style == 2)
+		{
+			const int shift = (static_cast<int>(pool.targetRadius) *
+				(8 + static_cast<int>((coreHash >> 8) % 9u))) / 100;
+			coreOffsetX = (kDirX[baseDirection] * shift) / 256;
+			coreOffsetZ = (kDirZ[baseDirection] * shift) / 256;
+		}
+		const int coreRadius = 60 + static_cast<int>((coreHash >> 12) % 20u);
+		const int coreVertical = 27 + static_cast<int>((coreHash >> 20) % 13u);
+		DrawLobe(coreOffsetX, coreOffsetZ, coreRadius, coreVertical,
+			0, 14 + static_cast<int>((coreHash >> 24) % 7u), 100);
+
+		int lobeCount;
+		if (pool.targetRadius <= 18)
+			lobeCount = 3 + static_cast<int>((seed >> 9) & 1u);
+		else
+			lobeCount = 4 + static_cast<int>((seed >> 9) & 1u);
+
+		for (int i = 1; i < lobeCount; ++i)
+		{
+			const uint32_t h = Hash32(seed + 0x6D2B79F5u *
+				static_cast<uint32_t>(i));
+			int direction = static_cast<int>(h & 15u);
+
+			// Four broad procedural families: rounded, stretched, one-sided
+			// spill and explosive starburst.  Jitter keeps members of the same
+			// family from looking like preset templates.
+			if (style == 1)
+			{
+				const int jitter = static_cast<int>((h >> 4) % 3u) - 1;
+				direction = (baseDirection + ((i & 1) ? 0 : 8) +
+					jitter + 16) & 15;
+			}
+			else if (style == 2)
+			{
+				const int fan = static_cast<int>((h >> 4) % 7u) - 3;
+				direction = (baseDirection + fan + 16) & 15;
+			}
+			else if (style == 3)
+			{
+				direction = (direction + i * 3) & 15;
+			}
+
+			int radialPercent = 28 + static_cast<int>((h >> 8) % 46u);
+			if (style == 1)
+				radialPercent += 8;
+			else if (style == 2)
+				radialPercent += 4;
+			if (radialPercent > 86) radialPercent = 86;
+
+			const int offsetDistance = (static_cast<int>(pool.targetRadius) *
+				radialPercent) / 100;
+			const int offsetX = (kDirX[direction] * offsetDistance) / 256;
+			const int offsetZ = (kDirZ[direction] * offsetDistance) / 256;
+			int radiusPercent = 24 + static_cast<int>((h >> 15) % 32u);
+			if (style == 0 && i == 1)
+				radiusPercent += 8;
+			const int verticalPercent = 25 +
+				static_cast<int>((h >> 21) % 18u);
+			const int delay = 2 + static_cast<int>((h >> 26) % 7u);
+			const int duration = 10 + static_cast<int>((h >> 29) % 6u);
+			const int alphaPercent = 68 + static_cast<int>((h >> 12) % 28u);
+
+			DrawLobe(offsetX, offsetZ, radiusPercent, verticalPercent,
+				delay, duration, alphaPercent);
+		}
+
+		// A few small detached droplets give larger pools a less uniform outer
+		// contour.  They are delayed, so the pool appears to creep outward rather
+		// than simply scaling one pre-made silhouette.
+		int dropletCount = 0;
+		if (pool.targetRadius > 18)
+			dropletCount = static_cast<int>((seed >> 18) % 3u);
+		else
+			dropletCount = static_cast<int>((seed >> 18) & 1u);
+
+		for (int i = 0; i < dropletCount; ++i)
+		{
+			const uint32_t h = Hash32(seed ^ (0xC2B2AE35u +
+				0x27D4EB2Fu * static_cast<uint32_t>(i)));
+			const int direction = static_cast<int>(h & 15u);
+			const int radialPercent = 82 + static_cast<int>((h >> 5) % 42u);
+			const int offsetDistance = (static_cast<int>(pool.targetRadius) *
+				radialPercent) / 100;
+			const int offsetX = (kDirX[direction] * offsetDistance) / 256;
+			const int offsetZ = (kDirZ[direction] * offsetDistance) / 256;
+			const int radiusPercent = 9 + static_cast<int>((h >> 12) % 11u);
+			const int verticalPercent = 28 +
+				static_cast<int>((h >> 20) % 15u);
+			const int delay = 7 + static_cast<int>((h >> 25) % 6u);
+			const int duration = 8 + static_cast<int>((h >> 29) % 5u);
+			const int alphaPercent = 52 + static_cast<int>((h >> 15) % 24u);
+
+			DrawLobe(offsetX, offsetZ, radiusPercent, verticalPercent,
+				delay, duration, alphaPercent);
+		}
+	}
+}
+
 void Renderer::DrawBlood(Camera* camera)
 {
+	const int particleSize = Config::GetBloodParticleSize();
+	if (particleSize <= 0)
+		return;
+
 	Quick x, z, temp;
 	Quick cammatrix[4];
 	int32_t rotx, rotz;
@@ -875,9 +1209,9 @@ void Renderer::DrawBlood(Camera* camera)
 				ColourModify((b.color & 0xf00) >> 4, b.color & 0x0f0, (b.color & 0xf) << 4, mask, pal);
 			}
 
-			for (int32_t dy = iy; dy < (iy + Config::GetBlood()); dy++)
+			for (int32_t dy = iy; dy < (iy + particleSize); dy++)
 			{
-				for (int32_t dx = ix; dx < (ix + Config::GetBlood()); dx++)
+				for (int32_t dx = ix; dx < (ix + particleSize); dx++)
 				{
 					if ((dx >= 0) && (dx < renderwidth))
 					{
@@ -1129,29 +1463,656 @@ void Renderer::DrawDust(Camera* camera, float dt)
     }
 }
 
+
+void Renderer::DrawWallBloodSplats(Camera* camera)
+{
+    if (!camera || !Config::BloodPoolsEnabled() ||
+        gloommap->GetWallBloodSplats().empty() ||
+        !rendersurface || !rendersurface->pixels)
+        return;
+
+    struct SplatPart
+    {
+        float along;
+        float vertical;
+        float radiusAlong;
+        float radiusVertical;
+        float opacity;
+    };
+
+    static const int kDirX[16] = {
+        256, 237, 181,  98,   0, -98, -181, -237,
+       -256,-237,-181, -98,   0,  98,  181,  237
+    };
+    static const int kDirY[16] = {
+          0,  98, 181, 237, 256, 237, 181,  98,
+          0, -98,-181,-237,-256,-237,-181, -98
+    };
+    const auto Hash32 = [](uint32_t value) -> uint32_t
+    {
+        value ^= value >> 16;
+        value *= 0x7FEB352Du;
+        value ^= value >> 15;
+        value *= 0x846CA68Bu;
+        value ^= value >> 16;
+        return value;
+    };
+
+    uint32_t* surface = static_cast<uint32_t*>(rendersurface->pixels);
+    Quick cammatrix[4];
+    GloomMaths::GetCamRot(camera->rotquick.GetInt() & 0xFF, cammatrix);
+    const auto& zones = gloommap->GetZones();
+    const uint32_t now = SDL_GetTicks();
+
+    for (const auto& splat : gloommap->GetWallBloodSplats())
+    {
+        const float lifeAlpha = ZG_BloodDecalLifeAlpha(
+            now, splat.bornAtMs, splat.lifetimeMs);
+        if (lifeAlpha <= 0.0f)
+            continue;
+        if (splat.zone >= zones.size() || splat.zone >= walls.size())
+            continue;
+        const Zone& zone = zones[splat.zone];
+        if (!walls[splat.zone].valid || zone.ztype != Zone::ZT_WALL)
+            continue;
+
+        Quick wx1, wz1, wx2, wz2, tx;
+        wx1.SetInt(zone.x1); wz1.SetInt(zone.z1);
+        wx2.SetInt(zone.x2); wz2.SetInt(zone.z2);
+        wx1 = wx1 - camera->x; wz1 = wz1 - camera->z;
+        wx2 = wx2 - camera->x; wz2 = wz2 - camera->z;
+
+        tx = wx1;
+        Quick lxq = (wx1 * cammatrix[0]) + (wz1 * cammatrix[1]);
+        Quick lzq = (tx * cammatrix[2]) + (wz1 * cammatrix[3]);
+        tx = wx2;
+        Quick rxq = (wx2 * cammatrix[0]) + (wz2 * cammatrix[1]);
+        Quick rzq = (tx * cammatrix[2]) + (wz2 * cammatrix[3]);
+
+        if (zone.open)
+        {
+            Quick bias; bias.SetInt(12);
+            lzq = lzq + bias;
+            rzq = rzq + bias;
+        }
+
+        const float lx = static_cast<float>(lxq.GetInt());
+        const float lz = static_cast<float>(lzq.GetInt());
+        const float rx = static_cast<float>(rxq.GetInt());
+        const float rz = static_cast<float>(rzq.GetInt());
+        const float dx = rx - lx;
+        const float dz = rz - lz;
+        const float worldDx = static_cast<float>(zone.x2 - zone.x1);
+        const float worldDz = static_cast<float>(zone.z2 - zone.z1);
+        const float wallLength = std::sqrt(worldDx * worldDx + worldDz * worldDz);
+        if (wallLength < 1.0f)
+            continue;
+
+        const float centreT = static_cast<float>(splat.along) / 65535.0f;
+        float grow = static_cast<float>(splat.age) / 14.0f;
+        if (grow < 0.0f) grow = 0.0f;
+        if (grow > 1.0f) grow = 1.0f;
+        grow = grow * grow * (3.0f - 2.0f * grow);
+        grow = 0.42f + 0.58f * grow;
+        const float radius = static_cast<float>(splat.targetRadius) * grow;
+
+        // Build a deterministic impact pattern in wall-local coordinates.
+        // Several overlapping core stains make an irregular blot; small
+        // satellite droplets form a loose directional fan.  A gravity streak
+        // is optional rather than being stamped onto every mark.
+        SplatPart parts[12];
+        int partCount = 0;
+        const uint32_t baseHash = Hash32(splat.seed ^ 0xA341316Cu);
+        const int fanDir = static_cast<int>((baseHash >> 4) & 15u);
+        const float fanX = static_cast<float>(kDirX[fanDir]) / 256.0f;
+        const float fanY = static_cast<float>(kDirY[fanDir]) / 256.0f;
+
+        const int coreCount = 3;
+        for (int i = 0; i < coreCount && partCount < 12; ++i)
+        {
+            const uint32_t h = Hash32(baseHash + 0x9E3779B9u * static_cast<uint32_t>(i + 1));
+            const int dir = static_cast<int>((h >> 3) & 15u);
+            const float offset = radius * (0.04f + static_cast<float>((h >> 8) & 255u) / 255.0f * 0.30f);
+            const float scale = 0.42f + static_cast<float>((h >> 16) & 255u) / 255.0f * 0.34f;
+            const float aspect = 0.68f + static_cast<float>((h >> 24) & 127u) / 127.0f * 0.48f;
+            SplatPart& p = parts[partCount++];
+            p.along = static_cast<float>(kDirX[dir]) / 256.0f * offset;
+            p.vertical = static_cast<float>(kDirY[dir]) / 256.0f * offset;
+            p.radiusAlong = std::max(2.0f, radius * scale);
+            p.radiusVertical = std::max(2.0f, radius * scale * aspect);
+            p.opacity = 0.72f + static_cast<float>((h >> 20) & 15u) / 15.0f * 0.24f;
+        }
+
+        const int satelliteCount = 3 + static_cast<int>((baseHash >> 12) % 3u);
+        for (int i = 0; i < satelliteCount && partCount < 12; ++i)
+        {
+            const uint32_t h = Hash32(baseHash ^ (0x85EBCA6Bu * static_cast<uint32_t>(i + 3)));
+            const int spread = static_cast<int>((h >> 5) % 7u) - 3;
+            const int dir = (fanDir + spread + 16) & 15;
+            const float distance = radius * (0.72f + static_cast<float>((h >> 10) & 255u) / 255.0f * 1.25f);
+            const float dropScale = 0.09f + static_cast<float>((h >> 18) & 255u) / 255.0f * 0.19f;
+            const float sideJitter = (static_cast<int>((h >> 27) & 15u) - 7) * radius * 0.018f;
+            SplatPart& p = parts[partCount++];
+            p.along = static_cast<float>(kDirX[dir]) / 256.0f * distance - fanY * sideJitter;
+            p.vertical = static_cast<float>(kDirY[dir]) / 256.0f * distance + fanX * sideJitter;
+            p.radiusAlong = std::max(1.35f, radius * dropScale * (0.85f + ((h >> 2) & 3u) * 0.12f));
+            p.radiusVertical = std::max(1.35f, radius * dropScale * (0.66f + ((h >> 14) & 7u) * 0.07f));
+            p.opacity = 0.48f + static_cast<float>((h >> 22) & 31u) / 31.0f * 0.34f;
+        }
+
+        if (((baseHash >> 29) & 3u) == 0u && partCount < 12)
+        {
+            const uint32_t h = Hash32(baseHash ^ 0xC2B2AE35u);
+            SplatPart& p = parts[partCount++];
+            p.along = (static_cast<int>((h >> 4) & 31u) - 15) * radius * 0.015f;
+            p.vertical = radius * (0.62f + static_cast<float>((h >> 12) & 63u) / 63.0f * 0.38f);
+            p.radiusAlong = std::max(1.5f, radius * 0.10f);
+            p.radiusVertical = std::max(3.0f, radius * (0.28f + static_cast<float>((h >> 20) & 31u) / 31.0f * 0.20f));
+            p.opacity = 0.52f;
+        }
+
+        float maxAlongReach = radius;
+        float maxVerticalReach = radius;
+        for (int i = 0; i < partCount; ++i)
+        {
+            maxAlongReach = std::max(maxAlongReach,
+                std::fabs(parts[i].along) + parts[i].radiusAlong);
+            maxVerticalReach = std::max(maxVerticalReach,
+                std::fabs(parts[i].vertical) + parts[i].radiusVertical);
+        }
+
+        const float dt = std::min(0.48f, (maxAlongReach + 2.0f) / wallLength);
+        int x0 = walls[splat.zone].wl_lsx;
+        int x1 = walls[splat.zone].wl_rsx;
+        const auto projectT = [&](float t, int& sx) -> bool
+        {
+            if (t < 0.0f) t = 0.0f;
+            if (t > 1.0f) t = 1.0f;
+            const float px = lx + dx * t;
+            const float pz = lz + dz * t;
+            if (pz <= 4.0f) return false;
+            sx = halfrenderwidth + static_cast<int>(px * focmult / pz);
+            return true;
+        };
+        int projected0 = x0, projected1 = x1;
+        if (projectT(centreT - dt, projected0) && projectT(centreT + dt, projected1))
+        {
+            x0 = std::min(projected0, projected1) - 2;
+            x1 = std::max(projected0, projected1) + 2;
+        }
+        if (x0 < walls[splat.zone].wl_lsx) x0 = walls[splat.zone].wl_lsx;
+        if (x1 > walls[splat.zone].wl_rsx) x1 = walls[splat.zone].wl_rsx;
+        if (x0 < 0) x0 = 0;
+        if (x1 >= renderwidth) x1 = renderwidth - 1;
+        if (x0 > x1)
+            continue;
+
+        for (int sx = x0; sx <= x1; ++sx)
+        {
+            const float grad = static_cast<float>(sx - halfrenderwidth) /
+                static_cast<float>(focmult);
+            const float divisor = dx - grad * dz;
+            if (std::fabs(divisor) < 0.0001f)
+                continue;
+            const float m = (grad * lz - lx) / divisor;
+            if (m < 0.0f || m > 1.0f)
+                continue;
+
+            const float depthf = lz + m * dz;
+            if (depthf <= 5.0f || depthf >= 8192.0f)
+                continue;
+            const int depth = static_cast<int>(depthf + 0.5f);
+            const int depthTolerance = std::max(3, depth / 384);
+            if (std::abs(zbuff[sx] - depth) > depthTolerance)
+                continue;
+
+            const float alongWorld = (m - centreT) * wallLength;
+            if (std::fabs(alongWorld) > maxAlongReach)
+                continue;
+
+            Quick texpos;
+            float clampedM = m;
+            if (clampedM < 0.0f) clampedM = 0.0f;
+            if (clampedM > 0.9999847f) clampedM = 0.9999847f;
+            texpos.SetVal(static_cast<int32_t>(clampedM * 65536.0f));
+            int baseTexture = 0;
+            Column* texcol = GetTexColumn(static_cast<int>(splat.zone), texpos, baseTexture);
+            if (!texcol || texcol->flag)
+                continue;
+
+            int cy = halfrenderheight +
+                ((camera->y + static_cast<int>(splat.y)) * focmult) / depth;
+            int screenRadius = static_cast<int>((maxVerticalReach * focmult) / depth + 2.0f);
+            if (screenRadius < 2) screenRadius = 2;
+            if (screenRadius > 96) screenRadius = 96;
+            int sy0 = cy - screenRadius;
+            int sy1 = cy + screenRadius;
+            if (sy0 < ceilend[sx]) sy0 = ceilend[sx];
+            if (sy1 >= floorstart[sx]) sy1 = floorstart[sx] - 1;
+            if (sy0 < 0) sy0 = 0;
+            if (sy1 >= renderheight) sy1 = renderheight - 1;
+            if (sy0 > sy1)
+                continue;
+
+            const int pal = GetDimPalette(depth);
+            uint32_t bloodColour = 0;
+            const uint8_t r = static_cast<uint8_t>(((splat.color & 0xF00u) >> 8) * 17u);
+            const uint8_t g = static_cast<uint8_t>(((splat.color & 0x0F0u) >> 4) * 17u);
+            const uint8_t b = static_cast<uint8_t>((splat.color & 0x00Fu) * 17u);
+            if (fadetimer)
+                ColourModifyFade(r, g, b, bloodColour, pal);
+            else
+                ColourModify(r, g, b, bloodColour, pal);
+
+            float distance = 1.0f - (depthf - 128.0f) / (6144.0f - 128.0f);
+            if (distance < 0.0f) distance = 0.0f;
+            if (distance > 1.0f) distance = 1.0f;
+            const float baseAlpha = (122.0f + 82.0f * distance) * lifeAlpha;
+
+            for (int sy = sy0; sy <= sy1; ++sy)
+            {
+                const float wallY =
+                    (static_cast<float>(sy - halfrenderheight) * depthf /
+                        static_cast<float>(focmult)) - camera->y;
+                const float vertical = wallY - splat.y;
+
+                float strength = 0.0f;
+                for (int i = 0; i < partCount; ++i)
+                {
+                    const SplatPart& p = parts[i];
+                    const float px = alongWorld - p.along;
+                    const float py = vertical - p.vertical;
+                    const float metric =
+                        (px * px) / (p.radiusAlong * p.radiusAlong) +
+                        (py * py) / (p.radiusVertical * p.radiusVertical);
+                    if (metric <= 1.0f)
+                    {
+                        const float local = p.opacity *
+                            (0.40f + 0.60f * (1.0f - metric));
+                        if (local > strength) strength = local;
+                    }
+                }
+                if (strength <= 0.0f)
+                    continue;
+
+                int alpha = static_cast<int>(baseAlpha * strength + 0.5f);
+                if (alpha < 1) continue;
+                if (alpha > 225) alpha = 225;
+                uint32_t& dst = surface[sx + sy * renderwidth];
+                dst = ZG_AlphaBlendPixel(dst, bloodColour,
+                    static_cast<uint8_t>(alpha));
+            }
+        }
+    }
+}
+
+void Renderer::DrawWallReflections()
+{
+    if (Config::GetReflections() < 2 || !rendersurface || !rendersurface->pixels)
+        return;
+
+    uint32_t* surface = (uint32_t*)rendersurface->pixels;
+
+    // Mirror only the lower part of each already rendered wall column.  This
+    // keeps the cost linear in screen width and avoids a second ray-cast or a
+    // full-screen temporary buffer.  Alpha fades are continuous, not dithered.
+    for (int x = 0; x < renderwidth; ++x)
+    {
+        const int depth = zbuff[x];
+        if (depth <= 5 || depth >= 6144)
+            continue;
+
+        int wallTop = ceilend[x];
+        int wallFoot = floorstart[x];
+        if (wallTop < 0) wallTop = 0;
+        if (wallFoot <= wallTop || wallFoot < 0 || wallFoot >= renderheight)
+            continue;
+
+        const int wallHeight = wallFoot - wallTop;
+        if (wallHeight < 4)
+            continue;
+
+        // Use a much longer floor image than the first Update 4 pass.  The
+        // former wallHeight/8 strip was often only a handful of pixels high
+        // and therefore disappeared on textured floors.  About 45% of the
+        // visible wall height matches the useful length of enemy reflections
+        // while the hard cap keeps the pass inexpensive on close walls.
+        int reflectionHeight = (wallHeight * 45) / 100;
+        if (reflectionHeight < 4) reflectionHeight = 4;
+        if (reflectionHeight > 96) reflectionHeight = 96;
+        if (wallFoot + reflectionHeight > renderheight)
+            reflectionHeight = renderheight - wallFoot;
+        if (reflectionHeight <= 0)
+            continue;
+
+        float distance = 1.0f - (float)(depth - 96) / (float)(6144 - 96);
+        if (distance < 0.0f) distance = 0.0f;
+        if (distance > 1.0f) distance = 1.0f;
+        // Deliberately visible in ALL mode.  Distance still reduces the
+        // effect, but nearby wall feet now have enough contrast to survive
+        // dark and noisy floor textures.
+        const float baseAlpha = 64.0f + 76.0f * distance;
+
+        for (int row = 0; row < reflectionHeight; ++row)
+        {
+            const int sourceY = wallFoot - 1 - row;
+            const int targetY = wallFoot + row;
+            if (sourceY < wallTop || targetY >= renderheight)
+                break;
+
+            float fade = 1.0f - ((float)row + 0.5f) / (float)reflectionHeight;
+            if (fade <= 0.0f)
+                continue;
+            // Softer than a squared fade so the reflection remains visible
+            // farther down the floor, but still vanishes continuously.
+            fade *= 0.55f + 0.45f * fade;
+
+            int alphaValue = (int)(baseAlpha * fade + 0.5f);
+            if (alphaValue < 1)
+                continue;
+            if (alphaValue > 255)
+                alphaValue = 255;
+
+            const uint32_t source = surface[x + sourceY * renderwidth];
+            uint32_t& target = surface[x + targetY * renderwidth];
+            target = ZG_BlendReflectionPixel(target, source,
+                (uint8_t)alphaValue, 190);
+        }
+    }
+}
+
+void Renderer::DrawObjectFloorEffects(Camera* camera)
+{
+    if (!camera || !rendersurface || !rendersurface->pixels)
+        return;
+
+    const int reflectionMode = Config::GetReflections();
+    const bool drawPools = Config::BloodPoolsEnabled() &&
+        !gloommap->GetBloodPools().empty();
+    if (reflectionMode < 1 && !(Config::GetBlobShadows() != 0) && !drawPools)
+        return;
+
+    uint32_t* surface = (uint32_t*)rendersurface->pixels;
+
+    // Transparent texture strips (windows, fences and half-open doors) do not
+    // contribute to the opaque z-buffer.  Keep a tiny per-column cover buffer
+    // so reflections behind them cannot leak onto the foreground floor.
+    std::fill(reflectioncover.begin(), reflectioncover.end(), 30000);
+    for (const auto& strip : strips)
+    {
+        if (!strip.isstrip)
+            continue;
+        if (strip.rotx < 0 || strip.rotx >= renderwidth || strip.rotz <= 0)
+            continue;
+        if (strip.rotz < reflectioncover[strip.rotx])
+            reflectioncover[strip.rotx] = strip.rotz;
+    }
+
+    // Pools are the lowest object-related floor layer.  Drawing them here,
+    // after transparent-strip coverage is known but before shadows, glows and
+    // sprite reflections, keeps every later effect naturally in front.
+    if (drawPools)
+        DrawBloodPools(camera);
+
+    if (reflectionMode < 1 && !(Config::GetBlobShadows() != 0))
+        return;
+
+    // All floor effects are rendered in a separate pass before any sprite.
+    // Consequently a near reflection can never paint over a farther enemy.
+    for (auto o : strips)
+    {
+        if (o.isstrip || o.t <= 1 || o.t == 3 || !o.data.ms.render)
+            continue;
+
+        const int iz = o.rotz;
+        if (iz <= 5)
+            continue;
+
+        std::vector<Shape>* shapes = o.data.ms.shape;
+        if (!shapes || shapes->empty())
+            continue;
+
+        int frame = 0;
+        if (o.data.ms.render == 8)
+        {
+            uint16_t ang = GloomMaths::CalcAngle(
+                camera->x.GetInt(), camera->z.GetInt(),
+                o.x.GetInt(), o.z.GetInt());
+            ang += 16;
+            ang -= o.data.ms.rotquick.GetInt();
+            ang >>= 5;
+            ang &= 7;
+            frame = ang | (((o.data.ms.frame >> 16) & 7) << 3);
+        }
+        else
+        {
+            frame = o.data.ms.frame >> 16;
+        }
+
+        if (frame < 0) frame = 0;
+        if ((size_t)frame >= shapes->size())
+            frame = (int)shapes->size() - 1;
+
+        const Shape& shape = (*shapes)[frame];
+        const int shapeWidth = (int)shape.w;
+        const int shapeHeight = (int)shape.h;
+        if (shapeWidth <= 0 || shapeHeight <= 0 || shape.data.empty())
+            continue;
+
+        const int scale = o.data.ms.scale;
+        int screenWidth = ((shapeWidth * scale / 0x100) * focmult) / iz;
+        int screenHeight = ((shapeHeight * scale / 0x100) * focmult) / iz;
+        if (screenWidth <= 0 || screenHeight <= 0)
+            continue;
+
+        int screenCenterX = (o.rotx * focmult) / iz + halfrenderwidth;
+        int objectY = -o.y.GetInt() - camera->y;
+        objectY -= shapeHeight - shape.yh - 1;
+        objectY = (objectY * focmult) / iz;
+        const int spriteTop = halfrenderheight - objectY - screenHeight;
+        const int spriteBottom = spriteTop + screenHeight;
+        int groundY = halfrenderheight + (camera->y * focmult) / iz;
+        if (groundY < 0) groundY = 0;
+        if (groundY >= renderheight) groundY = renderheight - 1;
+
+        const bool enemy = ZG_IsEnemyLogicType(o.t);
+        const bool centreCovered =
+            screenCenterX >= 0 && screenCenterX < renderwidth &&
+            iz > reflectioncover[screenCenterX];
+
+        // Existing blob shadows remain independent from the reflection mode.
+        if (enemy && (Config::GetBlobShadows() != 0) && !centreCovered)
+        {
+            const int kShadowFarZ = 4096;
+            const int kShadowMinSize = 12;
+            const bool skipShadow =
+                (iz > kShadowFarZ) &&
+                (screenWidth < kShadowMinSize && screenHeight < kShadowMinSize);
+            if (!skipShadow)
+            {
+                int rx = screenWidth / 3; if (rx < 1) rx = 1;
+                int ry = screenWidth / 8; if (ry < 1) ry = 1;
+                ZG_DrawBlobShadow(surface, renderwidth, renderheight,
+                    zbuff.data(), screenCenterX, spriteBottom, rx, ry, iz);
+            }
+        }
+
+        int weaponIndex = -1;
+        if (objectgraphics)
+        {
+            for (int wi = 0; wi < 5; ++wi)
+            {
+                if (o.data.ms.shape == &objectgraphics->BulletShapes[wi] ||
+                    o.data.ms.shape == &objectgraphics->SparkShapes[wi])
+                {
+                    weaponIndex = wi;
+                    break;
+                }
+            }
+            if (weaponIndex < 0 &&
+                o.t >= ObjectGraphics::OLT_WEAPON1 &&
+                o.t <= ObjectGraphics::OLT_WEAPON5)
+            {
+                weaponIndex = o.t - ObjectGraphics::OLT_WEAPON1;
+            }
+        }
+
+        // Projectiles and weapon upgrades use the existing coloured floor glow,
+        // now controlled by REFLECTIONS rather than by MUZZLE FLASH.
+        if (reflectionMode >= 1 && weaponIndex >= 0 && !centreCovered &&
+            screenCenterX >= 0 && screenCenterX < renderwidth)
+        {
+            float tr = 1.0f, tg = 1.0f, tb = 1.0f;
+            Hud_GetWeaponTint(weaponIndex, tr, tg, tb);
+            int glowWidth = screenWidth;
+
+            if (o.t >= ObjectGraphics::OLT_WEAPON1 &&
+                o.t <= ObjectGraphics::OLT_WEAPON5)
+            {
+                // Restore the original pickup pulse from the pre-reflection
+                // renderer: use the actual visible floor clip under the item,
+                // not the mathematical horizon and not an absolute gap.  The
+                // glow therefore grows for a few frames at the bottom of the
+                // bob and contracts again as the weapon rises.
+                int floorClip = floorstart[screenCenterX];
+                if (floorClip < 0) floorClip = 0;
+                if (floorClip >= renderheight) floorClip = renderheight - 1;
+                int gap = floorClip - spriteBottom;
+                if (gap < 0) gap = 0;
+                int maxGap = screenHeight / 2;
+                if (maxGap < 8) maxGap = 8;
+                if (maxGap > 32) maxGap = 32;
+                float touch = 1.0f - (float)gap / (float)maxGap;
+                if (touch < 0.0f) touch = 0.0f;
+                if (touch > 1.0f) touch = 1.0f;
+                glowWidth = (int)((float)screenWidth * (1.0f + 0.5f * touch));
+                if (glowWidth < 1) glowWidth = 1;
+            }
+
+            ZG_DrawProjectileGlow(surface, renderwidth, renderheight,
+                zbuff.data(), floorstart.data(), screenCenterX, glowWidth,
+                iz, tr, tg, tb, camera->y, focmult, halfrenderheight);
+        }
+
+        if (reflectionMode < 1 || iz >= 5120 || (o.data.ms.blood & 0x8000))
+            continue;
+
+        int gap = groundY - spriteBottom;
+        if (gap < 0) gap = -gap;
+        int enemyGapLimit = screenHeight / 4 + 3;
+        if (enemyGapLimit < 5) enemyGapLimit = 5;
+        if (enemyGapLimit > 18) enemyGapLimit = 18;
+        int pickupGapLimit = screenHeight / 2 + 6;
+        if (pickupGapLimit < 10) pickupGapLimit = 10;
+        if (pickupGapLimit > 36) pickupGapLimit = 36;
+
+        const bool groundedEnemy = enemy && gap <= enemyGapLimit;
+        bool pickup = ZG_IsPickupLogicType(o.t);
+        if (o.t >= ObjectGraphics::OLT_WEAPON1 &&
+            o.t <= ObjectGraphics::OLT_WEAPON5 && gap <= pickupGapLimit)
+        {
+            pickup = true;
+        }
+        const bool groundedPickup = pickup && gap <= pickupGapLimit;
+        if (!groundedEnemy && !groundedPickup)
+            continue;
+
+        int reflectionHeight = groundedEnemy
+            ? (screenHeight * 55) / 100
+            : (screenHeight * 42) / 100;
+        if (reflectionHeight < 2) reflectionHeight = 2;
+        const int maxReflectionHeight = groundedEnemy ? 72 : 40;
+        if (reflectionHeight > maxReflectionHeight)
+            reflectionHeight = maxReflectionHeight;
+        if (groundY + reflectionHeight > renderheight)
+            reflectionHeight = renderheight - groundY;
+        if (reflectionHeight <= 0)
+            continue;
+
+        float distance = 1.0f - (float)(iz - 128) / (float)(5120 - 128);
+        if (distance < 0.0f) distance = 0.0f;
+        if (distance > 1.0f) distance = 1.0f;
+        distance = 0.35f + 0.65f * distance;
+
+        const int gapLimit = groundedEnemy ? enemyGapLimit : pickupGapLimit;
+        float contact = 1.0f - (float)gap / (float)(gapLimit + 1);
+        if (contact < 0.0f) contact = 0.0f;
+        if (contact > 1.0f) contact = 1.0f;
+
+        const float baseAlpha = (groundedEnemy ? 88.0f : 68.0f) * distance * contact;
+        const uint8_t brightness = groundedEnemy ? 165 : 180;
+        const int left = screenCenterX - screenWidth / 2;
+        const int palette = GetDimPalette(iz);
+
+        for (int sx = left; sx < left + screenWidth; ++sx)
+        {
+            if (sx < 0 || sx >= renderwidth)
+                continue;
+            if (iz > zbuff[sx] || iz > reflectioncover[sx])
+                continue;
+
+            int sourceX = ((sx - left) * shapeWidth) / screenWidth;
+            if (sourceX < 0) sourceX = 0;
+            if (sourceX >= shapeWidth) sourceX = shapeWidth - 1;
+            const int floorClip = floorstart[sx];
+
+            for (int row = 0; row < reflectionHeight; ++row)
+            {
+                const int sy = groundY + row;
+                if (sy < floorClip || sy < 0)
+                    continue;
+                if (sy >= renderheight)
+                    break;
+
+                int sourceY = shapeHeight - 1 -
+                    (row * shapeHeight) / reflectionHeight;
+                if (sourceY < 0) sourceY = 0;
+                if (sourceY >= shapeHeight) sourceY = shapeHeight - 1;
+
+                const uint32_t sourceColour =
+                    shape.data[sourceY + sourceX * shapeHeight];
+                if (sourceColour == 1)
+                    continue;
+
+                uint32_t dimColour = 0;
+                if (fadetimer)
+                {
+                    ColourModifyFade(
+                        (sourceColour >> 16) & 0xFF,
+                        (sourceColour >> 8) & 0xFF,
+                        sourceColour & 0xFF,
+                        dimColour, palette);
+                }
+                else
+                {
+                    ColourModify(
+                        (sourceColour >> 16) & 0xFF,
+                        (sourceColour >> 8) & 0xFF,
+                        sourceColour & 0xFF,
+                        dimColour, palette);
+                }
+
+                float fade = 1.0f -
+                    ((float)row + 0.5f) / (float)reflectionHeight;
+                if (fade <= 0.0f)
+                    continue;
+                fade *= fade;
+                int alphaValue = (int)(baseAlpha * fade + 0.5f);
+                if (alphaValue < 1)
+                    continue;
+                if (alphaValue > 255)
+                    alphaValue = 255;
+
+                uint32_t& target = surface[sx + sy * renderwidth];
+                target = ZG_BlendReflectionPixel(target, dimColour,
+                    (uint8_t)alphaValue, brightness);
+            }
+        }
+    }
+}
+
 void Renderer::DrawObjects(Camera* camera)
 {
-    // --- Dust parallax: feed camera motion (screen-space deltas) ---
-    static int prev_cam_x = 0, prev_cam_z = 0, prev_cam_rot = 0;
-    int cam_x = camera->x.GetInt();
-    int cam_z = camera->z.GetInt();
-    int cam_rot = camera->rotquick.GetInt() & 0xFF;
-
-    int dx = cam_x - prev_cam_x;
-    int dz = cam_z - prev_cam_z;
-    int drot = cam_rot - prev_cam_rot;
-
-    prev_cam_x = cam_x;
-    prev_cam_z = cam_z;
-    prev_cam_rot = cam_rot;
-
-    // Approximate mapping to screen-space drift (tweakable)
-    float screen_dx = dx * 0.08f;
-    float screen_dy = dz * 0.08f;
-    float yaw_rate = (float)((drot & 0xFF)) * (6.28318530718f / 256.0f);
-
-    RendererHooks::setCameraMotion(screen_dx, screen_dy, yaw_rate);
-
 	RendererHooks::markWorldFrame();
 
 	Quick x, z, temp;
@@ -1192,6 +2153,8 @@ void Renderer::DrawObjects(Camera* camera)
 
 	strips.sort(zcompare);
 
+	DrawObjectFloorEffects(camera);
+
 	for (auto o:strips)
 	{
 		if (o.isstrip)
@@ -1214,6 +2177,12 @@ void Renderer::DrawObjects(Camera* camera)
 				if (iz > 5) // add a bit of nearclip to prevent slowdown
 				{
 					std::vector<Shape>* s = o.data.ms.shape;
+
+					// Some maps contain objects whose graphics set exists but has no
+					// decoded frames.  The old clamp turned size()==0 into frame -1 and
+					// indexed 20 bytes before address zero on 32-bit ARM.
+					if (!s || s->empty())
+						continue;
 
 					uint16_t column = 0;
 
@@ -1247,30 +2216,41 @@ void Renderer::DrawObjects(Camera* camera)
 					//TODO: Gloom 3 seems to be missing baldy punch frames
 					//update - it is, they vanish in the original when they punch you
 
+					if (frametouse < 0)
+						frametouse = 0;
 					if ((size_t)frametouse >= s->size())
-					{
-						frametouse = s->size() - 1;
-					}
+						frametouse = static_cast<int>(s->size()) - 1;
 
+					const Shape& drawshape = (*s)[frametouse];
 					auto scale = o.data.ms.scale;
-					auto shapewidth = (*s)[frametouse].w;
-					auto shapeheight = (*s)[frametouse].h;
+					auto shapewidth = drawshape.w;
+					auto shapeheight = drawshape.h;
+
+					const size_t requiredPixels = static_cast<size_t>(shapewidth) *
+						static_cast<size_t>(shapeheight);
+					if (shapewidth == 0 || shapeheight == 0 ||
+						drawshape.data.size() < requiredPixels)
+						continue;
 
 					ix *= focmult;
 					ix /= iz;
 
 					// Add handle! otherwise bullets fill screen
-					iy -= (*s)[frametouse].h - (*s)[frametouse].yh - 1;
+					iy -= drawshape.h - drawshape.yh - 1;
 					iy *= focmult;
 					iy /= iz;
 
-					int h = ((shapeheight * scale / 0x100) * focmult) / iz;
-					int w = ((shapewidth * scale / 0x100) * focmult) / iz;
+					
+int h = ((shapeheight * scale / 0x100) * focmult) / iz;
+int w = ((shapewidth * scale / 0x100) * focmult) / iz;
 
-					if ((w > 0) && (h > 0))
-					{
+if ((w > 0) && (h > 0))
+{
+    // Floor shadows, glows and reflections are rendered in the dedicated
+    // pre-pass above, so every sprite remains in front of those effects.
 
-						Quick temp;
+    Quick temp;
+
 
 						Quick dx;
 						Quick dy;
@@ -1283,101 +2263,6 @@ void Renderer::DrawObjects(Camera* camera)
 						dy.SetInt(shapeheight);
 
 						temp.SetInt(w);
-
-
-                        // --- ZGloom: simple z-occluded blob shadow (enemies only) ---
-                        if (ZG_IsEnemyLogicType(o.t))
-                        {
-                            // Sprite center x in screen, foot y at bottom of sprite
-                            int cx = ix + halfrenderwidth;
-                            int ystart_shadow = halfrenderheight - iy - h;
-                            int cy = ystart_shadow + h;
-
-                            // Flat ellipse: wider than tall; based on sprite width
-                            int rx = (w / 3); if (rx < 1) rx = 1;
-                            int ry = (w / 8); if (ry < 1) ry = 1;
-
-                            // Performance: skip very small, distant shadows
-                            const int kShadowFarZ    = 4096;
-                            const int kShadowMinSize = 12;
-
-                            bool skipShadow = (iz > kShadowFarZ) && (w < kShadowMinSize && h < kShadowMinSize);
-
-                            if (!skipShadow)
-                            {
-                                ZG_DrawBlobShadow(surface, renderwidth, renderheight, zbuff.data(), cx, cy, rx, ry, iz, thermo);
-                            }
-                        }
-                        // --- ZGloom: projectile ground glow (player bullets only) ---
-                        if (objectgraphics && o.data.ms.shape)
-                        {
-                            int wepIndex = -1;
-                            for (int wi = 0; wi < 5; ++wi)
-                            {
-                                if (o.data.ms.shape == &objectgraphics->BulletShapes[wi])
-                                {
-                                    wepIndex = wi;
-                                    break;
-                                }
-                            }
-
-                            if (wepIndex >= 0)
-                            {
-                                int cx_proj = ix + halfrenderwidth;
-                                if (cx_proj >= 0 && cx_proj < renderwidth)
-                                {
-                                    float tr = 1.0f, tg = 1.0f, tb = 1.0f;
-                                    Hud_GetWeaponTint(wepIndex, tr, tg, tb);
-
-                                    int glowW = w;
-
-                                    // Weapon upgrade pickups (floating weapon balls):
-                                    // make the ground glow larger when they are at the bottom of their bob.
-                                    if (o.t >= ObjectGraphics::OLT_WEAPON1 && o.t <= ObjectGraphics::OLT_WEAPON5)
-                                    {
-                                        // Approximate bobbing height by how close the sprite bottom is to the floor in screen space.
-                                        int ystart_sprite = halfrenderheight - iy - h;
-                                        int spriteBottom = ystart_sprite + h;
-
-                                        int floorClip = floorstart[cx_proj];
-                                        if (floorClip < 0) floorClip = 0;
-                                        if (floorClip >= renderheight) floorClip = renderheight - 1;
-
-                                        int gap = floorClip - spriteBottom; // >= 0: distance from pickup bottom to floor
-                                        if (gap < 0) gap = 0;
-
-                                        int maxGap = h / 2;
-                                        if (maxGap < 8)  maxGap = 8;
-                                        if (maxGap > 32) maxGap = 32;
-
-                                        float t = 1.0f - (float)gap / (float)maxGap;
-                                        if (t < 0.0f) t = 0.0f;
-                                        if (t > 1.0f) t = 1.0f;
-
-                                        // Top of bob (weit vom Boden)  -> t ~ 0 -> 1.0x
-                                        // Bottom of bob (nahe am Boden)-> t ~ 1 -> 1.5x
-                                        float sizeScale = 1.0f + 0.5f * t;
-                                        glowW = (int)((float)w * sizeScale);
-                                        if (glowW < 1) glowW = 1;
-                                    }
-
-                                    ZG_DrawProjectileGlow(
-                                        surface,
-                                        renderwidth,
-                                        renderheight,
-                                        zbuff.data(),
-                                        floorstart.data(),
-                                        cx_proj,
-                                        glowW,
-                                        iz,
-                                        tr, tg, tb,
-                                        camera->y,
-                                        focmult,
-                                        halfrenderheight);
-                                }
-                            }
-                        }
-
 						dx = dx / temp;
 
 						temp.SetInt(h);
@@ -1410,7 +2295,17 @@ void Renderer::DrawObjects(Camera* camera)
 
 									if ((sx >= 0) && (sy >= 0))
 									{
-										auto col = (*s)[frametouse].data[ty.GetInt() + tx.GetInt()*shapeheight];
+										const int sourceX = tx.GetInt();
+										const int sourceY = ty.GetInt();
+										if (sourceX < 0 || sourceX >= shapewidth ||
+											sourceY < 0 || sourceY >= shapeheight)
+										{
+											ty = ty + dy;
+											continue;
+										}
+
+										auto col = drawshape.data[static_cast<size_t>(sourceY) +
+											static_cast<size_t>(sourceX) * shapeheight];
 
 										if (col != 1)
 										{
@@ -1577,6 +2472,17 @@ void Renderer::Render(Camera* camera)
 	strips.clear();
 
 	focmult = Config::GetFocalLength();
+
+	for (auto x = 0; x < renderwidth; x++)
+	{
+		Quick f;
+		Quick g;
+
+		f.SetVal(focmult);
+		g.SetVal(x - halfrenderwidth);
+
+		castgrads[x] = g / f;
+	}
 
 	for (size_t z = 0; z < walls.size(); z++)
 	{
@@ -1770,6 +2676,13 @@ void Renderer::Render(Camera* camera)
 		DrawCeil(camera);
 		DrawFloor(camera);
 	}
+
+	// Persistent MASSACRE splats are composited onto the already rendered wall
+	// before reflections, so lower marks are naturally mirrored by ALL mode.
+	DrawWallBloodSplats(camera);
+
+	// ALL adds conservative mirrored wall columns on top of the floor.
+	DrawWallReflections();
 
 	Uint32 now = SDL_GetTicks();
 	float dustdt = 0.0f;

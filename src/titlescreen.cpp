@@ -1,166 +1,372 @@
-
 #include "titlescreen.h"
-#include <string>
 #include "SaveSystem.h"
 
-// Ellipsize helper
-static std::string Ellipsize(const std::string& s, size_t maxLen = 38) {
-    if (s.size() <= maxLen) return s;
-    if (maxLen <= 3) return s.substr(0, maxLen);
-    return s.substr(0, maxLen - 3) + "...";
+#include <algorithm>
+#include <cctype>
+#include <string>
+
+namespace
+{
+    std::string TrimSpaces(const std::string& value)
+    {
+        std::size_t first = 0;
+        while (first < value.size() && value[first] == ' ')
+            ++first;
+
+        std::size_t last = value.size();
+        while (last > first && value[last - 1] == ' ')
+            --last;
+
+        return value.substr(first, last - first);
+    }
+
+    void AppendSpace(std::string& output)
+    {
+        if (!output.empty() && output.back() != ' ')
+            output.push_back(' ');
+    }
+
+    std::string FormatMapName(const std::string& mapPath)
+    {
+        std::string output;
+        output.reserve(mapPath.size());
+
+        for (unsigned char raw : mapPath)
+        {
+            if (std::isalnum(raw))
+            {
+                output.push_back(static_cast<char>(std::toupper(raw)));
+            }
+            else if (raw == '_')
+            {
+                // Script/map separators are shown as a dot in the level list:
+                // MAP1_1 becomes MAP1.1, while compact names such as MAP1G
+                // remain unchanged.
+                output.push_back('.');
+            }
+            else
+            {
+                AppendSpace(output);
+            }
+        }
+
+        output = TrimSpaces(output);
+        return output.empty() ? std::string("UNKNOWN") : output;
+    }
+
+    std::string ShortenDescription(const std::string& description)
+    {
+        std::string output;
+        output.reserve(description.size());
+
+        int wordCount = 0;
+        bool inWord = false;
+
+        for (unsigned char raw : description)
+        {
+            if (std::isalnum(raw))
+            {
+                if (!inWord)
+                {
+                    if (wordCount >= 4)
+                    {
+                        output = TrimSpaces(output);
+                        while (!output.empty() && output.back() == '.')
+                            output.pop_back();
+                        return output + "...";
+                    }
+                    ++wordCount;
+                    inWord = true;
+                }
+
+                output.push_back(static_cast<char>(std::toupper(raw)));
+                continue;
+            }
+
+            // Apostrophes are omitted because the original menu font has no
+            // apostrophe glyph: DON'T becomes DONT without creating a gap.
+            if (raw == '\'' || raw == '`')
+                continue;
+
+            const bool sentencePunctuation =
+                raw == '.' || raw == '!' || raw == '?' || raw == ':' || raw == ';' || raw == ',';
+
+            if (sentencePunctuation)
+            {
+                output = TrimSpaces(output);
+                if (raw == '!')
+                    output.push_back('!');
+                else if (raw == ':')
+                    output.push_back(':');
+                else
+                    output.push_back('.');
+                return output;
+            }
+
+            if (std::isspace(raw) || raw == '-' || raw == '/' || raw == '\\')
+            {
+                AppendSpace(output);
+                inWord = false;
+            }
+            else
+            {
+                // Unsupported punctuation acts as a word separator but is not
+                // allowed to create invisible holes in the fixed-width label.
+                AppendSpace(output);
+                inWord = false;
+            }
+        }
+
+        return TrimSpaces(output);
+    }
+
+    std::string FitLabelToWidth(const std::string& mapName,
+                                const std::string& shortDescription,
+                                Font& font,
+                                int maxWidth)
+    {
+        const std::string prefix = mapName + " ";
+        std::string body = shortDescription;
+        std::string label = prefix + body;
+
+        if (font.MeasureText(label, 1) <= maxWidth)
+            return label;
+
+        while (!body.empty() && body.back() == '.')
+            body.pop_back();
+        body = TrimSpaces(body);
+
+        while (!body.empty() && font.MeasureText(prefix + body + "...", 1) > maxWidth)
+            body.pop_back();
+
+        body = TrimSpaces(body);
+        if (body.empty())
+            return mapName;
+
+        return prefix + body + "...";
+    }
+
+    std::string BuildLevelLabel(const LevelDescriptor& level, Font& font, int maxWidth)
+    {
+        const std::string mapName = FormatMapName(level.mapPath);
+        std::string description = ShortenDescription(level.description);
+        if (description.empty())
+            description = "NO DESCRIPTION";
+        return FitLabelToWidth(mapName, description, font, maxWidth);
+    }
 }
 
-void TitleScreen::Render(SDL_Surface *src, SDL_Surface *dest, Font &font)
+void TitleScreen::SetLevels(const std::vector<LevelDescriptor>& newLevels)
+{
+    levels = newLevels;
+    if (selection < 0 || selection >= static_cast<int>(levels.size()))
+        selection = 0;
+}
+
+void TitleScreen::Render(SDL_Surface* src, SDL_Surface* dest, Font& font)
 {
     SDL_BlitSurface(src, nullptr, dest, nullptr);
-    bool flash = (timer / 5) & 1;
-
-    font.PrintMessage("ZGLOOM PSVITA 05.2026 v2", 245, dest, 1);
+    const bool flash = (timer / 5) & 1;
 
     if (status == TITLESTATUS_MAIN)
     {
-        const bool hasResume = SaveSystem::HasSaveForCurrentGame();
-        const int idxStart   = hasResume ? 1 : 0;
-        const int idxSelect  = idxStart + 1;
-        const int idxGame    = idxStart + 2;
-        const int idxQuit    = idxStart + 3;
+        const bool hasSave = SaveSystem::HasSave();
 
-        // Original-style placement: menu sits above the lower gloom logo overlay.
-        int y = hasResume ? 91 : 98;
+        if (!hasSave && selection == MAINENTRY_RESUME)
+            selection = MAINENTRY_PLAY;
 
-        if (hasResume) {
-            if (flash || (selection != 0)) font.PrintMessage("RESUME SAVED POSITION", y, dest, 1);
-            y += 15;
+        const int lineStep = 15;
+
+        if (hasSave)
+        {
+            const int menuY = 91;
+            if (flash || (selection != MAINENTRY_RESUME)) font.PrintMessage("RESUME SAVED POSITION", menuY + lineStep * 0, dest, 1);
+            if (flash || (selection != MAINENTRY_PLAY))   font.PrintMessage("START NEW GAME",          menuY + lineStep * 1, dest, 1);
+            if (flash || (selection != MAINENTRY_SELECT)) font.PrintMessage("SELECT LEVEL",             menuY + lineStep * 2, dest, 1);
+            if (flash || (selection != MAINENTRY_ABOUT))  font.PrintMessage("ABOUT GLOOM AND THIS PORT", menuY + lineStep * 3, dest, 1);
+            if (flash || (selection != MAINENTRY_QUIT))   font.PrintMessage("EXIT",                     menuY + lineStep * 4, dest, 1);
+        }
+        else
+        {
+            const int menuY = 98;
+            if (flash || (selection != MAINENTRY_PLAY))   font.PrintMessage("START NEW GAME",          menuY + lineStep * 0, dest, 1);
+            if (flash || (selection != MAINENTRY_SELECT)) font.PrintMessage("SELECT LEVEL",             menuY + lineStep * 1, dest, 1);
+            if (flash || (selection != MAINENTRY_ABOUT))  font.PrintMessage("ABOUT GLOOM AND THIS PORT", menuY + lineStep * 2, dest, 1);
+            if (flash || (selection != MAINENTRY_QUIT))   font.PrintMessage("EXIT",                     menuY + lineStep * 3, dest, 1);
         }
 
-        if (flash || (selection != idxStart))  font.PrintMessage("START NEW GAME", y, dest, 1);
-        y += 15;
-        if (flash || (selection != idxSelect)) font.PrintMessage("SELECT LEVEL", y, dest, 1);
-        y += 15;
-        if (flash || (selection != idxGame))   font.PrintMessage("ABOUT GLOOM AND THIS PORT", y, dest, 1);
-        y += 15;
-        if (flash || (selection != idxQuit))   font.PrintMessage("EXIT", y, dest, 1);
+        font.PrintMessage("ZGLOOM PSVITA 08.2026", 243, dest, 1);
     }
     else if (status == TITLESTATUS_SELECT)
     {
-        for (int i = selection - 10; i < selection + 10; i++)
+        font.PrintMessage("SELECT LEVEL", 4, dest, 1);
+
+        if (levels.empty())
         {
-            if ((i >= 0) && (i < (int)levelnames.size()))
-            {
-                const std::string label = Ellipsize(levelnames[i], 38);
-                if (flash || (i != selection)) {
-                    font.PrintMessage(label, 100 + (i - selection) * 10, dest, 1);
-                } else {
-                    font.PrintMessage(label, 100 + (i - selection) * 10, dest, 2);
-                }
-            }
+            font.PrintMessage("NO LEVELS FOUND", 116, dest, 1);
+            return;
+        }
+
+        const int visibleRows = 21;
+        const int topY = 22;
+        const int lineStep = 10;
+        const int leftX = 8;
+        const int maxWidth = std::max(0, dest->w - leftX * 2);
+
+        int first = selection - visibleRows / 2;
+        const int maxFirst = std::max(0, static_cast<int>(levels.size()) - visibleRows);
+        first = std::max(0, std::min(first, maxFirst));
+        const int last = std::min(static_cast<int>(levels.size()), first + visibleRows);
+
+        for (int i = first; i < last; ++i)
+        {
+            if (!flash && i == selection)
+                continue;
+
+            const int row = i - first;
+            const std::string label = BuildLevelLabel(levels[i], font, maxWidth);
+            font.PrintMessageAt(label, leftX, topY + row * lineStep, dest, 1);
         }
     }
-    else if (status == TITLESTATUS_GAME)
+    else
     {
-		font.PrintMessage("GLOOM BLACK MAGIC ENGINE", 40, dest, 1);
-		font.PrintMessage("BY BLACK MAGIC", 50, dest, 1);
+        font.PrintMessage("GLOOM BLACK MAGIC ENGINE", 40, dest, 1);
+        font.PrintMessage("BY BLACK MAGIC", 50, dest, 1);
 
-		font.PrintMessage("PROGRAMMED BY MARK SIBLY", 65, dest, 1);
-		font.PrintMessage("GRAPHICS BY THE BUTLER BROTHERS", 75, dest, 1);
-		font.PrintMessage("MUSIC BY KEV STANNARD", 85, dest, 1);
-		font.PrintMessage("AUDIO BY BLACK MAGIC", 95, dest, 1);
-		font.PrintMessage("DECRUNCHCODE BY THOMAS SCHWARZ", 105, dest, 1);
+        font.PrintMessage("PROGRAMMED BY MARK SIBLY", 65, dest, 1);
+        font.PrintMessage("GRAPHICS BY THE BUTLER BROTHERS", 75, dest, 1);
+        font.PrintMessage("MUSIC BY KEV STANNARD", 85, dest, 1);
+        font.PrintMessage("AUDIO BY BLACK MAGIC", 95, dest, 1);
+        font.PrintMessage("DECRUNCHCODE BY THOMAS SCHWARZ", 105, dest, 1);
 
-		font.PrintMessage("GLOOM3 AND ZOMBIE MASSACRE", 120, dest, 1);
-		font.PrintMessage("BY ALPHA SOFTWARE", 130, dest, 1);
+        font.PrintMessage("GLOOM3 AND ZOMBIE MASSACRE", 120, dest, 1);
+        font.PrintMessage("BY ALPHA SOFTWARE", 130, dest, 1);
 
-		font.PrintMessage("ABOUT THIS PORT", 145, dest, 1);
-		font.PrintMessage("CODE AND FIXES BY ANDIWELI", 160, dest, 1);
-		font.PrintMessage("AMBIENCE BY PROPHET", 170, dest, 1);
-		font.PrintMessage("BASED ON PORT BY SWIZPIG", 185, dest, 1);
+        font.PrintMessage("ABOUT THIS PORT", 145, dest, 1);
+        font.PrintMessage("CODE AND FIXES BY ANDIWELI", 160, dest, 1);
+        font.PrintMessage("AMBIENCE BY PROPHET", 170, dest, 1);
+        font.PrintMessage("BASED ON PORT BY SWIZPIG", 185, dest, 1);
 
-		font.PrintMessage("IN HONOR AND MEMORY OF MARK SIBLY", 200, dest, 1);
+        font.PrintMessage("IN HONOR AND MEMORY OF MARK SIBLY", 200, dest, 1);
     }
 }
 
+
 TitleScreen::TitleScreen()
+    : status(TITLESTATUS_MAIN), selection(MAINENTRY_RESUME), timer(0), heldDirection(0), repeatCountdown(0)
 {
-    status = TITLESTATUS_MAIN;
-    selection = 0;
-    timer = 0;
 }
 
-TitleScreen::TitleReturn TitleScreen::Update(int &levelout)
+void TitleScreen::MoveLevelSelection(int direction)
+{
+    if (status != TITLESTATUS_SELECT || levels.empty() || direction == 0)
+        return;
+
+    selection += direction;
+    const int levelCount = static_cast<int>(levels.size());
+    if (selection >= levelCount)
+        selection = 0;
+    else if (selection < 0)
+        selection = levelCount - 1;
+}
+
+void TitleScreen::ResetToMain()
+{
+    status = TITLESTATUS_MAIN;
+    selection = MAINENTRY_RESUME;
+    timer = 0;
+    heldDirection = 0;
+    repeatCountdown = 0;
+}
+
+void TitleScreen::UpdateLevelHold()
+{
+    int direction = 0;
+    if (Input::GetButton(SCE_CTRL_UP)) direction = -1;
+    else if (Input::GetButton(SCE_CTRL_DOWN)) direction = 1;
+
+    if (direction == 0)
+    {
+        heldDirection = 0;
+        repeatCountdown = 0;
+        return;
+    }
+    if (direction != heldDirection)
+    {
+        heldDirection = direction;
+        repeatCountdown = 8;
+        return;
+    }
+    if (repeatCountdown > 0)
+    {
+        --repeatCountdown;
+        return;
+    }
+    MoveLevelSelection(direction);
+    repeatCountdown = 1;
+}
+
+TitleScreen::TitleReturn TitleScreen::Update(int& levelout)
 {
     if (status == TITLESTATUS_MAIN)
     {
-        const bool hasResume = SaveSystem::HasSaveForCurrentGame();
-        const int count = hasResume ? 5 : 4;
-        const int idxStart   = hasResume ? 1 : 0;
-        const int idxSelect  = idxStart + 1;
-        const int idxGame    = idxStart + 2;
-        const int idxQuit    = idxStart + 3;
+        const bool hasSave = SaveSystem::HasSave();
+        if (!hasSave && selection == MAINENTRY_RESUME) selection = MAINENTRY_PLAY;
 
         if (Input::GetButtonDown(SCE_CTRL_DOWN))
         {
-            selection++;
-            if (selection >= count) selection = 0;
+            ++selection;
+            if (selection >= MAINENTRY_END) selection = hasSave ? MAINENTRY_RESUME : MAINENTRY_PLAY;
         }
-
         if (Input::GetButtonDown(SCE_CTRL_UP))
         {
-            selection--;
-            if (selection < 0) selection = count - 1;
+            --selection;
+            if (selection < (hasSave ? MAINENTRY_RESUME : MAINENTRY_PLAY)) selection = MAINENTRY_QUIT;
         }
-
         if (Input::GetButtonDown(SCE_CTRL_CROSS))
         {
-            if (hasResume && selection == 0) { return TITLERET_RESUME; } 
-            if (selection == idxStart)  return TITLERET_PLAY;
-            if (selection == idxQuit)   return TITLERET_QUIT;
-            if (selection == idxGame)   status = TITLESTATUS_GAME;
-            if (selection == idxSelect)
+            if (hasSave && selection == MAINENTRY_RESUME) return TITLERET_RESUME;
+            if (selection == MAINENTRY_PLAY) return TITLERET_PLAY;
+            if (selection == MAINENTRY_QUIT) return TITLERET_QUIT;
+            if (selection == MAINENTRY_ABOUT) status = TITLESTATUS_ABOUT;
+            if (selection == MAINENTRY_SELECT)
             {
                 selection = 0;
+                heldDirection = 0;
+                repeatCountdown = 0;
                 status = TITLESTATUS_SELECT;
             }
         }
     }
     else if (status == TITLESTATUS_SELECT)
     {
-        // Back from Level Select
         if (Input::GetButtonDown(SCE_CTRL_CIRCLE))
         {
             status = TITLESTATUS_MAIN;
-            selection = 0;
+            selection = MAINENTRY_SELECT;
+            heldDirection = 0;
+            repeatCountdown = 0;
         }
-
-        if (Input::GetButtonDown(SCE_CTRL_DOWN))
+        else
         {
-            selection++;
-            if (selection == (int)levelnames.size())
-                selection = 0;
-        }
-
-        if (Input::GetButtonDown(SCE_CTRL_UP))
-        {
-            selection--;
-            if (selection == -1)
-                selection = (int)levelnames.size() - 1;
-        }
-
-        if (Input::GetButtonDown(SCE_CTRL_CROSS))
-        {
-            levelout = selection;
-            status = TITLESTATUS_MAIN;
-            selection = 0;
-            return TITLERET_SELECT;
+            if (Input::GetButtonDown(SCE_CTRL_DOWN)) MoveLevelSelection(1);
+            if (Input::GetButtonDown(SCE_CTRL_UP)) MoveLevelSelection(-1);
+            UpdateLevelHold();
+            if (Input::GetButtonDown(SCE_CTRL_CROSS) && !levels.empty() && selection >= 0 && selection < static_cast<int>(levels.size()))
+            {
+                levelout = selection;
+                status = TITLESTATUS_MAIN;
+                selection = MAINENTRY_SELECT;
+                heldDirection = 0;
+                repeatCountdown = 0;
+                return TITLERET_SELECT;
+            }
         }
     }
-    else
+    else if (Input::GetButtonDown(SCE_CTRL_CIRCLE) || Input::GetButtonDown(SCE_CTRL_CROSS))
     {
-        // About screens: back to MAIN
-        if (Input::GetButtonDown(SCE_CTRL_CIRCLE))
-            status = TITLESTATUS_MAIN;
-        else if (Input::GetButtonDown(SCE_CTRL_CROSS))
-            status = TITLESTATUS_MAIN;
+        status = TITLESTATUS_MAIN;
+        selection = MAINENTRY_ABOUT;
     }
-
     return TITLERET_NOTHING;
 }

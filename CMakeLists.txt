@@ -38,7 +38,7 @@ endif()
 
 set(VITA_APP_NAME "Gloom Collection")
 set(VITA_TITLEID  "ZGLOOMCOL")
-set(VITA_VERSION  "05.26")
+set(VITA_VERSION  "08.26")
 
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=gnu11")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -fpermissive")
@@ -77,6 +77,8 @@ add_executable(${PROJECT_NAME}
     src/BootGameSelect.cpp
 	src/menuscreen.h
 	src/gamelogic.cpp
+	src/DefenderGame.h
+	src/DefenderGame.cpp
 	src/gamelogic.h
 	src/binresources.h
 	src/binresource.cpp
@@ -105,7 +107,7 @@ add_executable(${PROJECT_NAME}
 target_sources(${PROJECT_NAME} PRIVATE
     src/vita/RendererVita2D.cpp
     src/vita/RendererHooks.cpp
-	src/ConfigEffectsFallback.cpp
+	src/ConfigOverlays.cpp
 )
 
 # Optional: Draw HUD last over effects (deferred HUD overlay)

@@ -19,7 +19,7 @@ void setCameraMotion(float dx, float dy, float yawRate);
 void EffectsDrawOverlaysVita2D(); // original overlay entry
 
 // FIX: DeferHudRender now takes MapObject& (matches call site: pobj)
-void DeferHudRender(::Hud* hud, ::MapObject& pobj, ::Font* font, int renderW, int renderH);
+void DeferHudRender(::Hud* hud, ::MapObject& pobj, ::Font* font, int renderW, int renderH, int lives);
 
 // HUD overlay wrapper that draws HUD last, over vignette/grain/scanlines
 void EffectsDrawOverlaysVita2D_WithHud();

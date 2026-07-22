@@ -51,8 +51,14 @@ namespace Config
 	int32_t GetFocalLength();
 	int GetMouseSens();
 	void SetMouseSens(int sens);
+	int GetBloodMode();
+	void SetBloodMode(int mode);
+	int GetBloodParticleSize();
+	bool BloodPoolsEnabled();
 	int GetBlood();
 	void SetBlood(int b);
+	int GetReflections();
+	void SetReflections(int mode);
 	int  GetMuzzleFlash();
 	void SetMuzzleFlash(int on);
 	int GetDustEnabled();

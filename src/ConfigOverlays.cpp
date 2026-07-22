@@ -17,6 +17,8 @@ namespace Config {
     static int g_grainInt = 1; // 0..4, with 1 already strong
     static int g_scan     = 0;
     static int g_blob     = 1;
+    static int g_muzzle   = 0;
+    static int g_bilinear = 0;
 
     static int g_scanInt  = 1; // 0..4
 
@@ -55,10 +57,12 @@ if (g_loaded) return;
             else if (!std::strcmp(key, "V_SOFTNESS")) g_vSoftness = clamp(val, 0, 5);
             else if (!std::strcmp(key, "V_WARMTH"))   g_vWarmth   = clamp(val, -100, 100);
             else if (!std::strcmp(key, "GRAIN"))      g_grain     = (val != 0);
-            else if (!std::strcmp(key, "GRAIN_I") && std::strcmp(key, "GRAIN_INTENSITY"))    g_grainInt  = clamp(val, 0, 5);
+            else if ((!std::strcmp(key, "GRAIN_I") || !std::strcmp(key, "GRAIN_INTENSITY")))    g_grainInt  = clamp(val, 0, 5);
             else if (!std::strcmp(key, "SCAN"))       g_scan      = (val != 0);
-            else if (!std::strcmp(key, "SCAN_I")  && std::strcmp(key, "SCAN_INTENSITY"))     g_scanInt   = clamp(val, 0, 5);
+            else if ((!std::strcmp(key, "SCAN_I") || !std::strcmp(key, "SCAN_INTENSITY")))     g_scanInt   = clamp(val, 0, 5);
             else if (!std::strcmp(key, "BLOB"))       g_blob      = (val != 0);
+            else if (!std::strcmp(key, "MUZZLE"))     g_muzzle    = (val != 0);
+            else if (!std::strcmp(key, "BILINEAR"))   g_bilinear  = (val != 0);
 
         }
     }
@@ -102,4 +106,10 @@ if (g_loaded) return;
 
 int  GetBlobShadows(){ ensureLoaded(); return g_blob ? 1 : 0; }
 void SetBlobShadows(int s){ ensureLoaded(); g_blob = (s!=0); EffectsConfigSave(); }
+
+int  GetMuzzleFlash(){ ensureLoaded(); return g_muzzle ? 1 : 0; }
+void SetMuzzleFlash(int s){ ensureLoaded(); g_muzzle = (s!=0); EffectsConfigSave(); }
+
+int  GetBilinearFilter(){ ensureLoaded(); return g_bilinear ? 1 : 0; }
+void SetBilinearFilter(int s){ ensureLoaded(); g_bilinear = (s!=0); EffectsConfigSave(); }
 } // namespace Config

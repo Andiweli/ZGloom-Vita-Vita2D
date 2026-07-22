@@ -21,6 +21,7 @@ static ::MapObject*  g_deferObj  = nullptr;
 static ::Font*       g_deferFont = nullptr;
 static int           g_RW = 320; // render width (world)
 static int           g_RH = 256; // render height (world)
+static int           g_lives = 3;
 
 static SDL_Surface*       g_hudSurf = nullptr;          // ARGB8888 @ HUD base size
 static std::vector<uint32_t> g_rgbaBuf;                 // RGBA upload buffer
@@ -42,7 +43,7 @@ static const float kHudScale   = 1.50f;
 static const float kHudScaleY  = 0.75f;
 
 // Call from game loop instead of direct hud.Render(...)
-void DeferHudRender(::Hud* hud, ::MapObject& pobj, ::Font* font, int renderW, int renderH) {
+void DeferHudRender(::Hud* hud, ::MapObject& pobj, ::Font* font, int renderW, int renderH, int lives) {
     // Take a snapshot of the player object so we don't reference a stack object later.
     g_deferHud         = hud;
     g_deferObjSnapshot = pobj;
@@ -52,6 +53,7 @@ void DeferHudRender(::Hud* hud, ::MapObject& pobj, ::Font* font, int renderW, in
     // Remember the current world render size for correct letterboxing of the HUD.
     g_RW = (renderW > 0 ? renderW : 320);
     g_RH = (renderH > 0 ? renderH : 256);
+    g_lives = lives;
 }
 
 void EffectsDrawOverlaysVita2D(); // provided elsewhere
@@ -74,7 +76,7 @@ void EffectsDrawOverlaysVita2D_WithHud() {
         if (g_hudSurf) {
             // Clear transparent and render HUD into it
             SDL_FillRect(g_hudSurf, nullptr, 0x00000000u);
-            g_deferHud->Render(g_hudSurf, *g_deferObj, *g_deferFont);
+            g_deferHud->Render(g_hudSurf, *g_deferObj, *g_deferFont, g_lives);
 
             const int W = g_hudSurf->w, H = g_hudSurf->h;
             g_rgbaBuf.resize((size_t)W * (size_t)H);
@@ -134,10 +136,15 @@ void EffectsDrawOverlaysVita2D_WithHud() {
                                                    /*scale*/ sx_narrow, sy_full);
                 }
 
-                // Right strip of top row (letterbox-aligned, full scale)
+                // Right strip of top row (letterbox-aligned, full scale).
+                // Vita HUD adjustment: move the complete life reserve three heart
+                // widths (3 * 8 logical pixels) farther to the right.  Applying
+                // the offset here avoids clipping the glyphs inside the 320-pixel
+                // HUD surface while leaving the top-left HEALTH/WEAPON panel fixed.
                 if (W - TLW > 0 && TLH > 0) {
+                    const float lifeReserveShiftX = 24.0f * sx_full;
                     vita2d_draw_texture_part_scale(g_hudTex,
-                                                   /*dest*/ (float)(dx + TLW * scx), (float)dy,
+                                                   /*dest*/ (float)(dx + TLW * scx) + lifeReserveShiftX, (float)dy,
                                                    /*src*/  (float)TLW, 0.0f,
                                                    /*w,h*/  (float)(W - TLW), (float)TLH,
                                                    /*scale*/ sx_full, sy_full);

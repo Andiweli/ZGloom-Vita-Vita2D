@@ -1,33 +1,41 @@
 #pragma once
+
+#include <cstdint>
 #include <string>
+#include <vector>
 
 struct Camera;
 class GloomMap;
 
-namespace SaveSystem {
+namespace SaveSystem
+{
+    struct SaveData
+    {
+        int formatVersion = 2;
+        std::string levelPath;
+        int flatIndex = -1;
+        int camX = 0;
+        int camY = 0;
+        int camZ = 0;
+        int camRot = 0;
+        int hp = 100;
+        int lives = 3;
+        int weapon = 0;
+        int reload = 0;
+        int reloadcnt = 0;
+        std::vector<uint32_t> eventHistory;
+    };
 
-struct SaveData {
-    std::string levelPath;
-    int x = 0;
-    int z = 0;
-    int rot = 0;     // 0..255
-    int hp = 100;
-    int weapon = 0;  // 0..4
-    int reload = 0;  // fire/reload gate
-    int reloadcnt = 0;
-    int flat = -1;   // 0..9 (floor/roof set), -1 = unknown
-};
+    bool HasSave();
+    bool HasSaveForCurrentGame();
+    bool LoadFromDisk(SaveData& outData);
+    bool SaveToDisk(const SaveData& inData);
 
-// Call whenever a new map will be loaded by the script:
-void SetCurrentLevelPath(const std::string& levelPath);
-// Call whenever the script sets a flat (SOP_LOADFLAT):
-void SetCurrentFlat(int flat);
-int  GetCurrentFlat();
+    void SetCurrentLevelPath(const std::string& levelPath);
+    const std::string& GetCurrentLevelPath();
+    void SetCurrentFlat(int flatIndex);
+    int GetCurrentFlat();
 
-bool HasSaveForCurrentGame();
-
-bool SavePosition(const Camera& cam, const GloomMap& gmap);
-bool LoadFromDisk(SaveData& out);
-bool ApplyToGame(const SaveData& d, Camera& cam, GloomMap& gmap);
-
-} // namespace SaveSystem
+    // Vita compatibility helper retained for old call sites.
+    bool ApplyToGame(const SaveData& data, Camera& cam, GloomMap& gmap);
+}

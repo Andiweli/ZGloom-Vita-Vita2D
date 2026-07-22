@@ -1,109 +1,175 @@
 #include "EventReplay.h"
+
+#include <algorithm>
+#include <cstdio>
+#include <string>
+#include <vector>
+#include <sys/stat.h>
+
 #include "config.h"
 #include "gloommap.h"
-#include "gamelogic.h"
 
-#include <vector>
-#include <string>
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <fstream>
-#include <sstream>
-#include <algorithm>
+namespace
+{
+    std::vector<uint32_t> g_events;
+    bool g_replaying = false;
 
-#if defined(_WIN32)
-#include <direct.h>
-#define mkdir(path,mode) _mkdir(path)
-#else
-#include <sys/stat.h>
-#endif
+    const char* kEventsFile = "last.events";
 
-namespace {
-
-static void EnsureDir(const std::string& path) {
-    ::mkdir(path.c_str(), 0777);
-}
-
-static std::string GameKey() {
-    switch (Config::GetGameID()) {
-        case 0: return "gloom";
-        case 1: return "deluxe";
-        case 2: return "gloom3";
-        case 3: return "massacre";
-        default: return "gloom";
-    }
-}
-
-static std::string EventsPath() {
-    std::string base = "ux0:/data/ZGloom";
-    EnsureDir(base);
-    EnsureDir(base + "/saves");
-    std::string dir = base + "/saves/" + GameKey();
-    EnsureDir(dir);
-    return dir + "/last.events";
-}
-
-static bool s_loaded = false;
-static bool s_seen[32] = {false};
-static std::vector<int> s_events;
-
-static void LoadOnce() {
-    if (s_loaded) return;
-    s_loaded = true;
-    std::ifstream in(EventsPath());
-    if (!in) return;
-    std::string line;
-    while (std::getline(in, line)) {
-        std::istringstream is(line);
-        int ev = -1;
-        if (!(is >> ev)) continue;
-        if (ev < 0 || ev >= 25) continue;
-        if (ev >= 19) continue; // we only ever persisted one-shots
-        if (!s_seen[ev]) {
-            s_seen[ev] = true;
-            s_events.push_back(ev);
+    std::string BuildEventsPath()
+    {
+        std::string key;
+        switch (Config::GetGameID())
+        {
+            case Config::GLOOM: key = "gloom"; break;
+            case Config::DELUXE: key = "deluxe"; break;
+            case Config::GLOOM3: key = "gloom3"; break;
+            case Config::MASSACRE: key = "massacre"; break;
+            default: key = "custom"; break;
         }
+        const std::string root = "ux0:/data/ZGloom";
+        const std::string saves = root + "/saves";
+        const std::string dir = saves + "/" + key;
+        ::mkdir(root.c_str(), 0777);
+        ::mkdir(saves.c_str(), 0777);
+        ::mkdir(dir.c_str(), 0777);
+        return dir + "/" + kEventsFile;
+    }
+
+    bool IsPersistentEvent(uint32_t ev)
+    {
+        // Gloom maps contain events 1..24.  Event 1 creates the initial map
+        // objects and is already executed by GloomMap::Load().
+        return ev >= 2 && ev <= 24;
+    }
+
+    void AddUniqueEvent(uint32_t ev)
+    {
+        if (!IsPersistentEvent(ev))
+            return;
+
+        if (std::find(g_events.begin(), g_events.end(), ev) == g_events.end())
+            g_events.push_back(ev);
     }
 }
 
-static void AppendToFile(int ev) {
-    std::FILE* f = std::fopen(EventsPath().c_str(), "a");
-    if (!f) return;
-    std::fprintf(f, "%d\n", ev);
-    std::fclose(f);
-}
+namespace EventReplay
+{
+    void Clear()
+    {
+        g_events.clear();
+        g_replaying = false;
+    }
 
-} // namespace
+    void Record(uint32_t ev)
+    {
+        if (g_replaying)
+            return;
 
-namespace EventReplay {
+        AddUniqueEvent(ev);
+    }
 
-void Record(uint32_t ev) {
-    if (ev >= 19) return;        // only one-shots are persisted
-    if (ev >= 25) return;
-    LoadOnce();
-    if (s_seen[ev]) return;
-    s_seen[ev] = true;
-    s_events.push_back((int)ev);
-    AppendToFile((int)ev);
-}
+    void SetEvents(const std::vector<uint32_t>& events)
+    {
+        g_events.clear();
+        for (const uint32_t ev : events)
+            AddUniqueEvent(ev);
+    }
 
-void Replay(GloomMap& gmap, GameLogic& logic) {
-    LoadOnce();
-    bool gotele = false;
-    Teleport tele;
-    for (int ev : s_events) {
-        gotele = false;
-        gmap.ExecuteEvent((uint32_t)ev, gotele, tele);
-        logic.MarkEventHit(ev);
+    const std::vector<uint32_t>& GetEvents()
+    {
+        return g_events;
+    }
+
+    bool HasReplay()
+    {
+        const std::string path = BuildEventsPath();
+        FILE* f = std::fopen(path.c_str(), "rb");
+        if (!f)
+            return false;
+        std::fclose(f);
+        return true;
+    }
+
+    bool LoadFromDisk()
+    {
+        const std::string path = BuildEventsPath();
+        FILE* f = std::fopen(path.c_str(), "rb");
+        if (!f)
+            return false;
+
+        g_events.clear();
+
+        uint32_t ev = 0;
+        while (std::fread(&ev, sizeof(ev), 1, f) == 1)
+            AddUniqueEvent(ev);
+
+        const bool readError = (std::ferror(f) != 0);
+        std::fclose(f);
+        return !readError && !g_events.empty();
+    }
+
+    bool SaveToDisk()
+    {
+        const std::string path = BuildEventsPath();
+        const std::string temporaryPath = path + ".tmp";
+
+        FILE* f = std::fopen(temporaryPath.c_str(), "wb");
+        if (!f)
+            return false;
+
+        bool ok = true;
+        for (const uint32_t ev : g_events)
+        {
+            if (std::fwrite(&ev, sizeof(ev), 1, f) != 1)
+            {
+                ok = false;
+                break;
+            }
+        }
+
+        ok &= (std::fflush(f) == 0);
+        ok &= (std::ferror(f) == 0);
+        ok &= (std::fclose(f) == 0);
+
+        if (!ok)
+        {
+            std::remove(temporaryPath.c_str());
+            return false;
+        }
+
+        if (std::rename(temporaryPath.c_str(), path.c_str()) == 0)
+            return true;
+
+        // Compatibility fallback for desktop C runtimes that do not replace.
+        std::remove(path.c_str());
+        if (std::rename(temporaryPath.c_str(), path.c_str()) == 0)
+            return true;
+
+        std::remove(temporaryPath.c_str());
+        return false;
+    }
+
+    void ReplayAll(GloomMap& map)
+    {
+        if (g_events.empty())
+            return;
+
+        const std::vector<uint32_t> snapshot = g_events;
+        g_replaying = true;
+
+        bool dummyTele = false;
+        Teleport dummyTp;
+
+        for (const uint32_t ev : snapshot)
+        {
+            map.ExecuteEvent(ev,
+                             dummyTele,
+                             dummyTp,
+                             false,
+                             EventExecutionMode::PersistentReplay);
+        }
+
+        g_replaying = false;
     }
 }
-
-void Clear() {
-    s_loaded = true;
-    std::fill(std::begin(s_seen), std::end(s_seen), false);
-    s_events.clear();
-    std::remove(EventsPath().c_str());
-}
-
-} // namespace EventReplay
