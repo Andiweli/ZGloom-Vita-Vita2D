@@ -1,4 +1,5 @@
-# ZGloom-Vita-Vita2D – GPU-accelerated Amiga Gloom port for PS Vita / PSTV
+# ZGloom-Vita-Vita2D
+**GPU-accelerated Amiga Gloom port for PS Vita / PSTV**
 
 Vita2D-based, GPU-accelerated port of the modern **ZGloom** engine, bringing the classic Amiga FPS **Gloom** and its successors to PlayStation Vita and PSTV.
 
